@@ -17,25 +17,25 @@ const jsonHeaders = {
 
 export async function onRequestGet() {
   try {
-    const states = await fetchAircraftStates(AIRPLANES_LIVE_URL, "Airplanes.live");
-    const enrichment = await enrichStates(states.slice(0, MAX_ENRICHED_FLIGHTS));
+    const feed = await fetchAircraftStates(AIRPLANES_LIVE_URL, "Airplanes.live");
+    const enrichment = await enrichStates(feed.states.slice(0, MAX_ENRICHED_FLIGHTS), feed.enrichment);
 
     return json({
       receivedAt: Date.now(),
       source: "airplanes-live",
-      states,
+      states: feed.states,
       enrichment
     });
   } catch (primaryError) {
     try {
-      const states = await fetchAircraftStates(ADSB_LOL_URL, "adsb.lol");
-      const enrichment = await enrichStates(states.slice(0, MAX_ENRICHED_FLIGHTS));
+      const feed = await fetchAircraftStates(ADSB_LOL_URL, "adsb.lol");
+      const enrichment = await enrichStates(feed.states.slice(0, MAX_ENRICHED_FLIGHTS), feed.enrichment);
 
       return json({
         receivedAt: Date.now(),
         source: "adsb-lol-backup",
         warning: `Airplanes.live unavailable, using backup aircraft feed. ${primaryError.message || ""}`.trim(),
-        states,
+        states: feed.states,
         enrichment
       });
     } catch (backupError) {
@@ -66,12 +66,15 @@ async function fetchAircraftStates(url, providerName) {
   const payload = await response.json();
   const aircraft = Array.isArray(payload.ac) ? payload.ac : [];
   const nowSeconds = Math.floor(Date.now() / 1000);
-
-  return aircraft
+  const visibleAircraft = aircraft
     .filter((aircraft) => aircraft.lat !== undefined && aircraft.lon !== undefined)
     .filter((aircraft) => aircraft.lat >= BOUNDS.minLat && aircraft.lat <= BOUNDS.maxLat)
-    .filter((aircraft) => aircraft.lon >= BOUNDS.minLon && aircraft.lon <= BOUNDS.maxLon)
-    .map((aircraft) => toStateVector(aircraft, nowSeconds));
+    .filter((aircraft) => aircraft.lon >= BOUNDS.minLon && aircraft.lon <= BOUNDS.maxLon);
+
+  return {
+    states: visibleAircraft.map((aircraft) => toStateVector(aircraft, nowSeconds)),
+    enrichment: buildFeedEnrichment(visibleAircraft)
+  };
 }
 
 function toStateVector(aircraft, nowSeconds) {
@@ -100,20 +103,32 @@ function toStateVector(aircraft, nowSeconds) {
   ];
 }
 
-async function enrichStates(states) {
+function buildFeedEnrichment(aircraft) {
+  return Object.fromEntries(aircraft
+    .filter((aircraft) => aircraft.hex)
+    .map((aircraft) => [aircraft.hex, {
+      aircraftType: aircraft.desc || aircraft.t || "",
+      registration: aircraft.r || "",
+      operator: aircraft.ownOp || aircraft.op || ""
+    }]));
+}
+
+async function enrichStates(states, feedEnrichment = {}) {
   const entries = await Promise.all(states.map(async (state) => {
     const icao24 = state?.[0];
     const callsign = String(state?.[1] || "").trim();
     if (!icao24) return null;
+    const fromFeed = feedEnrichment[icao24] || {};
 
     const [aircraft, route] = await Promise.all([
-      fetchAircraft(icao24),
+      fromFeed.aircraftType && fromFeed.registration ? Promise.resolve({}) : fetchAircraft(icao24),
       fetchRoute(callsign)
     ]);
 
     return [icao24, {
-      aircraftType: aircraft.type || aircraft.model || "Unknown",
-      registration: aircraft.registration || "Unknown",
+      aircraftType: fromFeed.aircraftType || aircraft.type || aircraft.model || "Unknown",
+      registration: fromFeed.registration || aircraft.registration || "Unknown",
+      airline: fromFeed.operator || "",
       origin: route.origin || "Unknown",
       destination: route.destination || "Unknown"
     }];

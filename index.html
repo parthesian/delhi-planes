@@ -1096,7 +1096,8 @@
       }
       return {
         source: "airplanes-live-direct",
-        states: adsbAircraftToStates(payload.ac || [])
+        states: adsbAircraftToStates(payload.ac || []),
+        enrichment: buildAdsbEnrichment(payload.ac || [])
       };
     }
 
@@ -1179,6 +1180,16 @@
         });
     }
 
+    function buildAdsbEnrichment(aircraft) {
+      return Object.fromEntries(aircraft
+        .filter((item) => item.hex)
+        .map((item) => [item.hex, {
+          aircraftType: item.desc || item.t || "",
+          registration: item.r || "",
+          operator: item.ownOp || item.op || ""
+        }]));
+    }
+
     function numericAdsbAltitude(value) {
       if (value === "ground" || value === undefined || value === null) return null;
       const parsed = Number(value);
@@ -1205,6 +1216,7 @@
         if (fromServer) {
           return {
             ...flight,
+            airline: fromServer.airline || fromServer.operator || flight.airline,
             enrichment: {
               aircraftType: fromServer.aircraftType || "Unknown",
               registration: fromServer.registration || "Unknown",
