@@ -18,6 +18,7 @@
       --line: rgba(148, 163, 184, 0.18);
       --accent: #38bdf8;
       --accent-2: #fbbf24;
+      --selected-flight: #fb7185;
       --good: #34d399;
       --warn: #fbbf24;
       --bad: #fb7185;
@@ -301,13 +302,21 @@
       font-size: 18px;
       color: #38bdf8;
       text-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
-      transition: color 0.2s ease;
+      transition: color 0.2s ease, filter 0.2s ease, font-size 0.2s ease, text-shadow 0.2s ease;
     }
 
     .flight-marker.is-selected .flight-arrow {
-      color: #fbbf24;
-      font-size: 22px;
-      text-shadow: 0 0 12px rgba(251, 191, 36, 0.6);
+      color: var(--selected-flight);
+      filter: drop-shadow(0 0 8px rgba(251, 113, 133, 0.95));
+      font-size: 24px;
+      text-shadow:
+        0 0 8px rgba(255, 255, 255, 0.95),
+        0 0 16px rgba(251, 113, 133, 0.9),
+        0 0 28px rgba(251, 113, 133, 0.72);
+    }
+
+    .projected-route.is-selected {
+      filter: drop-shadow(0 0 5px rgba(251, 113, 133, 0.95)) drop-shadow(0 0 12px rgba(251, 113, 133, 0.7));
     }
 
     .leaflet-control-zoom a {
@@ -461,8 +470,8 @@
     }
 
     .flight-card.is-selected {
-      border-color: rgba(251, 191, 36, 0.55);
-      box-shadow: 0 18px 52px rgba(251, 191, 36, 0.12);
+      border-color: rgba(251, 113, 133, 0.68);
+      box-shadow: 0 18px 52px rgba(251, 113, 133, 0.18);
     }
 
     .flight-card::before {
@@ -883,6 +892,9 @@
     const AUTO_REFRESH_WINDOW_MS = 60 * 60 * 1000;
     const MAP_ZOOM = 10;
     const TRAIL_POINT_LIMIT = 8;
+    const PROJECTED_ROUTE_MIN_KM = 4;
+    const PROJECTED_ROUTE_MAX_KM = 18;
+    const PROJECTED_ROUTE_MINUTES = 2;
     const FLIGHTS_API_URL = "/api/flights";
     const DIRECT_AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
     const ADSBDB_CALLSIGN_URL = "https://api.adsbdb.com/v0/callsign/";
@@ -991,6 +1003,7 @@
       map: null,
       markers: new Map(),
       trails: new Map(),
+      projections: new Map(),
       boundsRect: null,
       observerMarker: null,
       ready: false
@@ -1427,6 +1440,7 @@
           flightMap.map.removeLayer(marker);
           flightMap.markers.delete(key);
           removeTrail(key);
+          removeProjectedRoute(key);
           state.flightTrails.delete(key);
         }
       });
@@ -1450,6 +1464,7 @@
         }
 
         updateTrailLine(key);
+        updateProjectedRoute(key, flight, selected);
       });
 
       if (state.selectedFlightKey && !nextKeys.has(state.selectedFlightKey)) {
@@ -1493,6 +1508,67 @@
       flightMap.trails.delete(key);
     }
 
+    function updateProjectedRoute(key, flight, selected) {
+      removeProjectedRoute(key);
+      const points = projectedRoutePoints(flight);
+      if (!points) return;
+
+      const line = L.polyline(points, {
+        color: selected ? "#fb7185" : "#38bdf8",
+        weight: selected ? 4 : 2,
+        opacity: selected ? 1 : 0.72,
+        dashArray: "8 8",
+        lineCap: "round",
+        className: `projected-route${selected ? " is-selected" : ""}`,
+        interactive: false
+      });
+      line.addTo(flightMap.map);
+      flightMap.projections.set(key, line);
+    }
+
+    function removeProjectedRoute(key) {
+      const projection = flightMap.projections.get(key);
+      if (!projection) return;
+      flightMap.map.removeLayer(projection);
+      flightMap.projections.delete(key);
+    }
+
+    function projectedRoutePoints(flight) {
+      if (!Number.isFinite(flight.latitude) ||
+        !Number.isFinite(flight.longitude) ||
+        !Number.isFinite(flight.headingDegrees) ||
+        flight.onGround) {
+        return null;
+      }
+
+      const speedKnots = Number.isFinite(flight.speedKnots) ? flight.speedKnots : 240;
+      const distanceKm = clamp(
+        speedKnots * 1.852 * (PROJECTED_ROUTE_MINUTES / 60),
+        PROJECTED_ROUTE_MIN_KM,
+        PROJECTED_ROUTE_MAX_KM
+      );
+      const destination = destinationPoint(flight.latitude, flight.longitude, flight.headingDegrees, distanceKm);
+      return [[flight.latitude, flight.longitude], destination];
+    }
+
+    function destinationPoint(latitude, longitude, bearingDegrees, distanceKm) {
+      const earthRadiusKm = 6371;
+      const angularDistance = distanceKm / earthRadiusKm;
+      const bearing = toRadians(bearingDegrees);
+      const lat1 = toRadians(latitude);
+      const lon1 = toRadians(longitude);
+      const lat2 = Math.asin(
+        Math.sin(lat1) * Math.cos(angularDistance) +
+        Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing)
+      );
+      const lon2 = lon1 + Math.atan2(
+        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
+        Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
+      );
+
+      return [toDegrees(lat2), toDegrees(lon2)];
+    }
+
     function selectFlight(flightKey, { pan = true } = {}) {
       const flight = state.flights.find((item) => item.icao24 === flightKey);
       if (!flight) return;
@@ -1516,7 +1592,9 @@
       flightMap.markers.forEach((marker, key) => {
         const flight = state.flights.find((item) => item.icao24 === key);
         if (flight) {
-          marker.setIcon(createFlightIcon(flight, key === selectedKey));
+          const selected = key === selectedKey;
+          marker.setIcon(createFlightIcon(flight, selected));
+          updateProjectedRoute(key, flight, selected);
         }
       });
     }
@@ -1763,6 +1841,14 @@
 
     function toRadians(degrees) {
       return degrees * Math.PI / 180;
+    }
+
+    function toDegrees(radians) {
+      return radians * 180 / Math.PI;
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
     }
 
     function getCallsignPrefix(callsign) {
