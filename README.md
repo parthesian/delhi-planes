@@ -29,9 +29,24 @@ Then open `http://localhost:8788`.
 
 ## Cloudflare deployment
 
-For Cloudflare Pages, deploy this repository as a static site with:
+### Cloudflare Pages
 
-- Build command: none
+Deploy this repository as a static site with:
+
+- Framework preset: `None`
+- Build command: leave empty
+- Deploy command: leave empty
 - Output directory: `/`
+- Root directory: `/`
+
+### Cloudflare Workers static assets
+
+If the Cloudflare project is configured to run `npx wrangler deploy`, keep that deploy command. The included `wrangler.toml` points Wrangler at the repository root and deploys `index.html` as Worker static assets.
+
+Equivalent CLI command:
+
+```bash
+npx wrangler deploy
+```
 
 If direct browser API calls ever need to be replaced, keep the UI and swap the fetch URLs in `index.html` for a Cloudflare Worker or Pages Function that proxies OpenSky/HexDB and returns the same JSON shape.
