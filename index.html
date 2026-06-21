@@ -730,17 +730,17 @@
       queue: document.getElementById("queue")
     };
 
-    elements.refreshButton.addEventListener("click", () => refreshFlights({ preferCache: false }));
+    elements.refreshButton.addEventListener("click", () => refreshFlights());
     startCountdown();
-    refreshFlights({ preferCache: true });
+    refreshFlights();
 
-    async function refreshFlights({ preferCache }) {
+    async function refreshFlights() {
       if (state.isLoading) return;
       setLoading(true);
       hideNotice();
 
       try {
-        const openSky = await getOpenSkyStates(preferCache);
+        const openSky = await getOpenSkyStates();
         const flights = normalizeStates(openSky.states || []);
         const enrichedFlights = await enrichFlights(flights);
 
@@ -771,10 +771,10 @@
       }
     }
 
-    async function getOpenSkyStates(preferCache) {
+    async function getOpenSkyStates() {
       const cached = readJson(CACHE_KEY);
       const cacheAge = cached ? Date.now() - cached.receivedAt : Infinity;
-      if (cached && (preferCache || cacheAge < OPENSKY_CACHE_MS)) {
+      if (cached && cacheAge < OPENSKY_CACHE_MS) {
         return { ...cached.payload, receivedAt: cached.receivedAt, fromCache: true };
       }
 
@@ -1103,7 +1103,7 @@
     function scheduleAutoRefresh() {
       clearTimeout(state.autoRefreshTimer);
       state.nextRefreshAt = Date.now() + AUTO_REFRESH_SECONDS * 1000;
-      state.autoRefreshTimer = setTimeout(() => refreshFlights({ preferCache: false }), AUTO_REFRESH_SECONDS * 1000);
+      state.autoRefreshTimer = setTimeout(() => refreshFlights(), AUTO_REFRESH_SECONDS * 1000);
     }
 
     function readJson(key) {
