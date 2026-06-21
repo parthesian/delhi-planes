@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plane Spotter</title>
+  <meta name="description" content="A simple real-time plane spotting dashboard for Dwarka Sector 9, Delhi.">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08111f;
+      --panel: rgba(15, 23, 42, 0.84);
+      --panel-strong: rgba(15, 23, 42, 0.96);
+      --panel-soft: rgba(30, 41, 59, 0.7);
+      --text: #e5eefb;
+      --muted: #93a4ba;
+      --line: rgba(148, 163, 184, 0.18);
+      --accent: #38bdf8;
+      --accent-2: #fbbf24;
+      --good: #34d399;
+      --warn: #fbbf24;
+      --bad: #fb7185;
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.2), transparent 34rem),
+        radial-gradient(circle at 80% 0%, rgba(251, 191, 36, 0.16), transparent 26rem),
+        linear-gradient(145deg, #050914 0%, var(--bg) 45%, #0f172a 100%);
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .app {
+      width: min(1120px, 100%);
+      margin: 0 auto;
+      padding: 20px 16px 36px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 22px;
+      background: linear-gradient(160deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.7));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(120deg, transparent 0 42%, rgba(255, 255, 255, 0.05) 43%, transparent 44%),
+        radial-gradient(circle at 80% 20%, rgba(56, 189, 248, 0.14), transparent 16rem);
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 18px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: 999px;
+      padding: 7px 11px;
+      color: #bae6fd;
+      background: rgba(14, 165, 233, 0.12);
+      font-size: 0.82rem;
+      letter-spacing: 0.02em;
+    }
+
+    .pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--good);
+      box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6);
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+      70% { box-shadow: 0 0 0 10px rgba(52, 211, 153, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.2rem, 10vw, 5rem);
+      line-height: 0.92;
+      letter-spacing: -0.075em;
+    }
+
+    .subtitle {
+      max-width: 680px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+
+    .toolbar {
+      display: grid;
+      gap: 12px;
+    }
+
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 13px;
+      background: rgba(15, 23, 42, 0.58);
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 5px;
+      color: var(--text);
+      font-size: 1rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .refresh-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 44px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 16px;
+      color: #04111f;
+      background: linear-gradient(135deg, var(--accent), #7dd3fc);
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 12px 28px rgba(56, 189, 248, 0.22);
+    }
+
+    .refresh-button:disabled {
+      cursor: wait;
+      opacity: 0.72;
+    }
+
+    .countdown {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 12px;
+      color: var(--muted);
+      background: rgba(15, 23, 42, 0.5);
+      font-size: 0.9rem;
+    }
+
+    .spinner {
+      display: none;
+      width: 15px;
+      height: 15px;
+      border: 2px solid rgba(255, 255, 255, 0.24);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .is-loading .spinner {
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .notice {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      border-radius: 18px;
+      padding: 12px 14px;
+      color: #fde68a;
+      background: rgba(251, 191, 36, 0.09);
+      line-height: 1.5;
+    }
+
+    .notice.show {
+      display: block;
+    }
+
+    .section {
+      margin-top: 26px;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .section-heading h2 {
+      margin: 0;
+      font-size: 1rem;
+      letter-spacing: 0.02em;
+    }
+
+    .section-heading p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+      text-align: right;
+    }
+
+    .flight-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    .flight-card {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 16px;
+      background: var(--panel);
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.22);
+    }
+
+    .flight-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    }
+
+    .flight-top {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      border-radius: 16px;
+      color: #082f49;
+      background: linear-gradient(135deg, #e0f2fe, #38bdf8);
+      font-size: 1.45rem;
+      box-shadow: inset 0 -12px 24px rgba(2, 132, 199, 0.28);
+    }
+
+    .identity {
+      min-width: 0;
+    }
+
+    .identity h3 {
+      margin: 0 0 3px;
+      font-size: 1.08rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .identity p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status-pill {
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: #f8fafc;
+      background: rgba(56, 189, 248, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.24);
+      font-size: 0.78rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .status-pill.hot {
+      color: #fff7ed;
+      background: rgba(251, 146, 60, 0.16);
+      border-color: rgba(251, 146, 60, 0.3);
+    }
+
+    .route {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+      margin: 18px 0;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px;
+      background: rgba(2, 6, 23, 0.26);
+    }
+
+    .airport {
+      min-width: 0;
+    }
+
+    .airport strong {
+      display: block;
+      font-size: 1rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .airport span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .route-plane {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      color: var(--accent-2);
+      background: rgba(251, 191, 36, 0.11);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 11px;
+      background: rgba(15, 23, 42, 0.54);
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 5px;
+      font-size: 1.02rem;
+    }
+
+    .trend {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .queue {
+      display: grid;
+      gap: 10px;
+    }
+
+    .queue-item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px;
+      background: var(--panel-soft);
+    }
+
+    .queue-number {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      color: #082f49;
+      background: #bae6fd;
+      font-weight: 900;
+      font-size: 0.86rem;
+    }
+
+    .queue-main {
+      min-width: 0;
+    }
+
+    .queue-main strong,
+    .queue-main span {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .queue-main span {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .queue-side {
+      text-align: right;
+      color: var(--muted);
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+
+    .empty {
+      display: none;
+      border: 1px dashed rgba(148, 163, 184, 0.32);
+      border-radius: 24px;
+      padding: 28px 18px;
+      text-align: center;
+      background: rgba(15, 23, 42, 0.52);
+    }
+
+    .empty.show {
+      display: block;
+    }
+
+    .empty-icon {
+      display: grid;
+      place-items: center;
+      width: 62px;
+      height: 62px;
+      margin: 0 auto 14px;
+      border-radius: 22px;
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.12);
+      font-size: 2rem;
+    }
+
+    .empty h2 {
+      margin: 0 0 8px;
+      font-size: 1.2rem;
+    }
+
+    .empty p {
+      max-width: 460px;
+      margin: 0 auto;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .footer-note {
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    @media (min-width: 760px) {
+      .app {
+        padding: 30px 24px 48px;
+      }
+
+      .hero {
+        padding: 30px;
+      }
+
+      .hero-content {
+        grid-template-columns: 1.3fr 0.8fr;
+        align-items: end;
+      }
+
+      .toolbar {
+        justify-self: end;
+        width: min(420px, 100%);
+      }
+
+      .flight-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .metrics {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+
+    @media (min-width: 1080px) {
+      .flight-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <div class="hero-content">
+        <div>
+          <div class="eyebrow"><span class="pulse"></span> Dwarka Sector 9 · facing south</div>
+          <h1>Plane Spotter</h1>
+          <p class="subtitle">
+            Aircraft currently inside a tight OpenSky box around IGI departure paths, centered on
+            28.5796008, 77.0702411. Lowest cards show first because they are most likely visible.
+          </p>
+        </div>
+
+        <div class="toolbar" id="toolbar">
+          <div class="status-strip">
+            <div class="stat">
+              <span>Last updated</span>
+              <strong id="lastUpdated">Never</strong>
+            </div>
+            <div class="stat">
+              <span>Aircraft nearby</span>
+              <strong id="aircraftCount">--</strong>
+            </div>
+          </div>
+          <div class="controls">
+            <button class="refresh-button" id="refreshButton" type="button">
+              <span class="spinner" aria-hidden="true"></span>
+              <span id="refreshLabel">Refresh radar</span>
+            </button>
+            <div class="countdown" id="countdown">Auto refresh in 15s</div>
+          </div>
+        </div>
+      </div>
+      <div class="notice" id="notice" role="status"></div>
+    </header>
+
+    <section class="section">
+      <div class="section-heading">
+        <h2>Nearest aircraft</h2>
+        <p>Sorted by altitude · OpenSky + HexDB best effort</p>
+      </div>
+      <div class="empty" id="emptyState">
+        <div class="empty-icon">✈</div>
+        <h2>Skies are quiet — check back in a bit</h2>
+        <p>No aircraft are currently reporting inside the local Dwarka / IGI bounding box.</p>
+      </div>
+      <div class="flight-grid" id="flightGrid"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <h2>Potential departure queue</h2>
+        <p>Low-altitude and climbing tracks first</p>
+      </div>
+      <div class="queue" id="queue"></div>
+    </section>
+
+    <p class="footer-note">
+      Data is refreshed no faster than every 15 seconds to respect anonymous OpenSky limits.
+      Route and aircraft details are community-sourced and may be incomplete.
+    </p>
+  </main>
+
+  <script>
+    // Keep this file intentionally dependency-free so it can be deployed as-is to
+    // Cloudflare Pages. If CORS or richer paid data becomes necessary later, swap
+    // these fetchers for a Worker endpoint that proxies/enriches the same shape.
+    const OBSERVER = { lat: 28.5796008, lon: 77.0702411 };
+    const AUTO_REFRESH_SECONDS = 15;
+    const OPENSKY_CACHE_MS = 15 * 1000;
+    const ENRICHMENT_CACHE_MS = 12 * 60 * 60 * 1000;
+    const OPENSKY_URL = "https://opensky-network.org/api/states/all?lamin=28.45&lomin=77.00&lamax=28.70&lomax=77.25";
+    const CACHE_KEY = "plane-spotter:last-open-sky";
+    const ENRICHMENT_KEY = "plane-spotter:enrichment:";
+
+    const AIRLINES = {
+      AIC: "Air India",
+      AIX: "Air India Express",
+      AXB: "Air India Express",
+      IAD: "Air India",
+      IGO: "IndiGo",
+      SEJ: "SpiceJet",
+      GOW: "Go First / GoAir",
+      VTI: "Vistara / Air India",
+      QFA: "Qantas",
+      UAE: "Emirates",
+      ETD: "Etihad",
+      QTR: "Qatar Airways",
+      SIA: "Singapore Airlines",
+      THA: "Thai Airways",
+      CPA: "Cathay Pacific",
+      DLH: "Lufthansa",
+      BAW: "British Airways",
+      KLM: "KLM",
+      AFR: "Air France",
+      FDX: "FedEx",
+      UPS: "UPS",
+      SVA: "Saudia",
+      OMA: "Oman Air",
+      JAI: "Jet Airways",
+      TGW: "Scoot",
+      MAS: "Malaysia Airlines"
+    };
+
+    const AIRPORTS = {
+      DEL: "Delhi",
+      VIDP: "Delhi",
+      IGI: "Delhi",
+      BOM: "Mumbai",
+      VABB: "Mumbai",
+      BLR: "Bengaluru",
+      VOBL: "Bengaluru",
+      HYD: "Hyderabad",
+      VOHS: "Hyderabad",
+      MAA: "Chennai",
+      VOMM: "Chennai",
+      CCU: "Kolkata",
+      VECC: "Kolkata",
+      AMD: "Ahmedabad",
+      VAAH: "Ahmedabad",
+      GOI: "Goa",
+      VOGO: "Goa",
+      COK: "Kochi",
+      VOCI: "Kochi",
+      PNQ: "Pune",
+      VAPO: "Pune",
+      IXC: "Chandigarh",
+      VICG: "Chandigarh",
+      LKO: "Lucknow",
+      VILK: "Lucknow",
+      JAI: "Jaipur",
+      VIJP: "Jaipur",
+      ATQ: "Amritsar",
+      VIAR: "Amritsar",
+      DXB: "Dubai",
+      OMDB: "Dubai",
+      AUH: "Abu Dhabi",
+      OMAA: "Abu Dhabi",
+      DOH: "Doha",
+      OTHH: "Doha",
+      SIN: "Singapore",
+      WSSS: "Singapore",
+      BKK: "Bangkok",
+      VTBS: "Bangkok",
+      KUL: "Kuala Lumpur",
+      WMKK: "Kuala Lumpur",
+      LHR: "London Heathrow",
+      EGLL: "London Heathrow",
+      JFK: "New York JFK",
+      KJFK: "New York JFK",
+      FRA: "Frankfurt",
+      EDDF: "Frankfurt",
+      CDG: "Paris CDG",
+      LFPG: "Paris CDG",
+      AMS: "Amsterdam",
+      EHAM: "Amsterdam",
+      SYD: "Sydney",
+      YSSY: "Sydney"
+    };
+
+    const state = {
+      flights: [],
+      isLoading: false,
+      lastUpdatedAt: null,
+      nextRefreshAt: Date.now() + AUTO_REFRESH_SECONDS * 1000,
+      countdownTimer: null,
+      autoRefreshTimer: null
+    };
+
+    const elements = {
+      toolbar: document.getElementById("toolbar"),
+      lastUpdated: document.getElementById("lastUpdated"),
+      aircraftCount: document.getElementById("aircraftCount"),
+      refreshButton: document.getElementById("refreshButton"),
+      refreshLabel: document.getElementById("refreshLabel"),
+      countdown: document.getElementById("countdown"),
+      notice: document.getElementById("notice"),
+      emptyState: document.getElementById("emptyState"),
+      flightGrid: document.getElementById("flightGrid"),
+      queue: document.getElementById("queue")
+    };
+
+    elements.refreshButton.addEventListener("click", () => refreshFlights());
+    startCountdown();
+    refreshFlights();
+
+    async function refreshFlights() {
+      if (state.isLoading) return;
+      setLoading(true);
+      hideNotice();
+
+      try {
+        const openSky = await getOpenSkyStates();
+        const flights = normalizeStates(openSky.states || []);
+        const enrichedFlights = await enrichFlights(flights);
+
+        state.flights = enrichedFlights.sort((a, b) => a.sortAltitude - b.sortAltitude);
+        state.lastUpdatedAt = openSky.receivedAt ? new Date(openSky.receivedAt) : new Date();
+        state.nextRefreshAt = Date.now() + AUTO_REFRESH_SECONDS * 1000;
+        render();
+
+        if (openSky.fromCache) {
+          showNotice("Showing cached radar data to avoid hitting OpenSky too quickly. It will refresh automatically in a few seconds.");
+        }
+      } catch (error) {
+        const cached = readJson(CACHE_KEY);
+        if (cached?.payload?.states) {
+          const flights = await enrichFlights(normalizeStates(cached.payload.states));
+          state.flights = flights.sort((a, b) => a.sortAltitude - b.sortAltitude);
+          state.lastUpdatedAt = new Date(cached.receivedAt);
+          render();
+          showNotice(`Live radar failed, showing cached data. ${error.message}`);
+        } else {
+          state.flights = [];
+          render();
+          showNotice(`Could not load flights right now. ${error.message}`);
+        }
+      } finally {
+        setLoading(false);
+        scheduleAutoRefresh();
+      }
+    }
+
+    async function getOpenSkyStates() {
+      const cached = readJson(CACHE_KEY);
+      const cacheAge = cached ? Date.now() - cached.receivedAt : Infinity;
+      if (cached && cacheAge < OPENSKY_CACHE_MS) {
+        return { ...cached.payload, receivedAt: cached.receivedAt, fromCache: true };
+      }
+
+      const response = await fetch(OPENSKY_URL, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`OpenSky returned ${response.status}.`);
+      }
+
+      const payload = await response.json();
+      const receivedAt = Date.now();
+      writeJson(CACHE_KEY, { receivedAt, payload });
+      return { ...payload, receivedAt, fromCache: false };
+    }
+
+    function normalizeStates(states) {
+      return states
+        .filter((item) => Array.isArray(item) && item[5] !== null && item[6] !== null)
+        .map((item) => {
+          const callsign = String(item[1] || "").trim();
+          const altitudeMeters = item[13] ?? item[7];
+          const altitudeFeet = altitudeMeters === null ? null : Math.round(altitudeMeters * 3.28084);
+          const speedKnots = item[9] === null ? null : Math.round(item[9] * 1.94384);
+          const headingDegrees = item[10] === null ? null : Math.round(item[10]);
+          const verticalRate = item[11];
+          const distanceKm = distanceFromObserver(item[6], item[5]);
+          const airlinePrefix = getCallsignPrefix(callsign);
+
+          return {
+            icao24: item[0],
+            callsign,
+            airlinePrefix,
+            airline: AIRLINES[airlinePrefix] || airlinePrefix || item[2] || "Unknown airline",
+            originCountry: item[2] || "Unknown",
+            longitude: item[5],
+            latitude: item[6],
+            altitudeFeet,
+            sortAltitude: altitudeFeet ?? Number.MAX_SAFE_INTEGER,
+            onGround: Boolean(item[8]),
+            speedKnots,
+            headingDegrees,
+            headingLabel: formatHeading(headingDegrees),
+            verticalRate,
+            trend: verticalTrend(verticalRate),
+            distanceKm,
+            status: flightStatus({ altitudeFeet, verticalRate, distanceKm: distanceKm, onGround: Boolean(item[8]) }),
+            updatedAt: item[4] ? new Date(item[4] * 1000) : null,
+            enrichment: emptyEnrichment()
+          };
+        });
+    }
+
+    async function enrichFlights(flights) {
+      return Promise.all(flights.map(async (flight) => {
+        const [aircraft, route] = await Promise.all([
+          fetchAircraft(flight.icao24),
+          fetchRoute(flight.callsign)
+        ]);
+
+        return {
+          ...flight,
+          enrichment: {
+            aircraftType: aircraft.type || aircraft.model || "Unknown",
+            registration: aircraft.registration || "Unknown",
+            origin: route.origin || "Unknown",
+            destination: route.destination || "Unknown"
+          }
+        };
+      }));
+    }
+
+    async function fetchAircraft(icao24) {
+      if (!icao24) return {};
+      return cachedFetch(`aircraft:${icao24}`, `https://hexdb.io/api/v1/aircraft/${icao24}`, (data) => ({
+        registration: pick(data, ["registration", "Registration", "reg", "Reg"]),
+        type: pick(data, ["type", "Type", "icaoTypeCode", "ICAOTypeCode", "aircraft", "Aircraft"]),
+        model: pick(data, ["model", "Model", "manufacturer", "Manufacturer"])
+      }));
+    }
+
+    async function fetchRoute(callsign) {
+      if (!callsign) return {};
+      return cachedFetch(`route:${callsign}`, `https://hexdb.io/api/v1/route/icao/${encodeURIComponent(callsign)}`, (data) => {
+        const routeText = typeof data === "string" ? data : pick(data, ["route", "Route"]);
+        const pieces = Array.isArray(data) ? data : splitRoute(routeText);
+        const origin = pick(data, ["origin", "Origin", "departure", "Departure", "from", "From"]) || pieces?.[0];
+        const destination = pick(data, ["destination", "Destination", "arrival", "Arrival", "to", "To"]) || pieces?.[pieces.length - 1];
+        return {
+          origin: cleanAirportCode(origin),
+          destination: cleanAirportCode(destination)
+        };
+      });
+    }
+
+    async function cachedFetch(cacheName, url, mapper) {
+      const key = ENRICHMENT_KEY + cacheName;
+      const cached = readJson(key);
+      if (cached && Date.now() - cached.receivedAt < ENRICHMENT_CACHE_MS) {
+        return cached.payload || {};
+      }
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) return {};
+        const data = await response.json();
+        const payload = mapper(data) || {};
+        writeJson(key, { receivedAt: Date.now(), payload });
+        return payload;
+      } catch {
+        return {};
+      }
+    }
+
+    function render() {
+      elements.lastUpdated.textContent = state.lastUpdatedAt ? formatTime(state.lastUpdatedAt) : "Never";
+      elements.aircraftCount.textContent = String(state.flights.length);
+      elements.emptyState.classList.toggle("show", state.flights.length === 0);
+      elements.flightGrid.innerHTML = state.flights.map(renderFlightCard).join("");
+      elements.queue.innerHTML = renderQueue(state.flights);
+    }
+
+    function renderFlightCard(flight) {
+      const origin = airportDisplay(flight.enrichment.origin);
+      const destination = airportDisplay(flight.enrichment.destination);
+      const isHot = flight.status.toLowerCase().includes("over you");
+
+      return `
+        <article class="flight-card">
+          <div class="flight-top">
+            <div class="logo" aria-hidden="true">✈</div>
+            <div class="identity">
+              <h3>${escapeHtml(flight.airline)}</h3>
+              <p>${escapeHtml(flight.callsign || "Unknown flight")} · ${escapeHtml(flight.originCountry)}</p>
+            </div>
+            <div class="status-pill ${isHot ? "hot" : ""}">${escapeHtml(flight.status)}</div>
+          </div>
+
+          <div class="route">
+            <div class="airport">
+              <strong>${escapeHtml(origin.code)}</strong>
+              <span>${escapeHtml(origin.city)}</span>
+            </div>
+            <div class="route-plane" aria-hidden="true">➜</div>
+            <div class="airport" style="text-align:right">
+              <strong>${escapeHtml(destination.code)}</strong>
+              <span>${escapeHtml(destination.city)}</span>
+            </div>
+          </div>
+
+          <div class="metrics">
+            <div class="metric">
+              <span>Aircraft</span>
+              <strong>${escapeHtml(flight.enrichment.aircraftType)}</strong>
+            </div>
+            <div class="metric">
+              <span>Registration</span>
+              <strong>${escapeHtml(flight.enrichment.registration)}</strong>
+            </div>
+            <div class="metric">
+              <span>Altitude</span>
+              <strong>${formatNumber(flight.altitudeFeet, "ft")}</strong>
+            </div>
+            <div class="metric">
+              <span>Speed</span>
+              <strong>${formatNumber(flight.speedKnots, "kt")}</strong>
+            </div>
+            <div class="metric">
+              <span>Heading</span>
+              <strong>${escapeHtml(flight.headingLabel)}</strong>
+            </div>
+            <div class="metric">
+              <span>Vertical</span>
+              <strong class="trend">${escapeHtml(flight.trend.icon)} ${escapeHtml(flight.trend.label)}</strong>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
+    function renderQueue(flights) {
+      const queueFlights = [...flights].sort((a, b) => {
+        const aClimb = a.trend.label === "Climbing" ? -2000 : 0;
+        const bClimb = b.trend.label === "Climbing" ? -2000 : 0;
+        return (a.sortAltitude + aClimb) - (b.sortAltitude + bClimb);
+      }).slice(0, 8);
+
+      if (!queueFlights.length) {
+        return `<div class="queue-item"><div class="queue-number">--</div><div class="queue-main"><strong>No queue yet</strong><span>Flights will appear here when OpenSky sees them.</span></div><div class="queue-side">Idle</div></div>`;
+      }
+
+      return queueFlights.map((flight, index) => {
+        const destination = airportDisplay(flight.enrichment.destination);
+        return `
+          <div class="queue-item">
+            <div class="queue-number">${index + 1}</div>
+            <div class="queue-main">
+              <strong>${escapeHtml(flight.callsign || flight.icao24.toUpperCase())} · ${escapeHtml(destination.code)}</strong>
+              <span>${escapeHtml(flight.airline)} to ${escapeHtml(destination.city)} · ${formatNumber(flight.altitudeFeet, "ft")}</span>
+            </div>
+            <div class="queue-side">${escapeHtml(flight.status)}<br>${escapeHtml(flight.trend.label)}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function flightStatus({ altitudeFeet, verticalRate, distanceKm, onGround }) {
+      if (onGround) return "On ground";
+      if (distanceKm !== null && distanceKm <= 2.5 && altitudeFeet !== null && altitudeFeet <= 9000) return "Over you now";
+      if (altitudeFeet !== null && altitudeFeet < 5000 && verticalRate !== null && verticalRate > 1.5) return "Took off";
+      if (verticalRate !== null && verticalRate > 1.5) return "Climbing out";
+      if (verticalRate !== null && verticalRate < -1.5) return "Descending";
+      if (altitudeFeet !== null && altitudeFeet < 8000) return "Low pass nearby";
+      return "Cruising nearby";
+    }
+
+    function verticalTrend(verticalRate) {
+      if (verticalRate === null || Number.isNaN(verticalRate)) return { label: "Unknown", icon: "•" };
+      if (verticalRate > 1.5) return { label: "Climbing", icon: "↗" };
+      if (verticalRate < -1.5) return { label: "Descending", icon: "↘" };
+      return { label: "Level", icon: "→" };
+    }
+
+    function formatHeading(degrees) {
+      if (degrees === null || Number.isNaN(degrees)) return "Unknown";
+      const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+      const normalized = ((degrees % 360) + 360) % 360;
+      const direction = directions[Math.round(normalized / 45) % 8];
+      return `${normalized}° ${direction}`;
+    }
+
+    function distanceFromObserver(lat, lon) {
+      if (lat === null || lon === null) return null;
+      const earthKm = 6371;
+      const dLat = toRadians(lat - OBSERVER.lat);
+      const dLon = toRadians(lon - OBSERVER.lon);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRadians(OBSERVER.lat)) * Math.cos(toRadians(lat)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return earthKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function toRadians(degrees) {
+      return degrees * Math.PI / 180;
+    }
+
+    function getCallsignPrefix(callsign) {
+      return (callsign || "").match(/^[A-Z]{2,3}/)?.[0] || "";
+    }
+
+    function airportDisplay(code) {
+      const cleaned = cleanAirportCode(code) || "Unknown";
+      return {
+        code: cleaned,
+        city: AIRPORTS[cleaned] || cleaned
+      };
+    }
+
+    function cleanAirportCode(value) {
+      if (!value) return "";
+      return String(value).trim().replace(/[^a-z0-9]/gi, "").toUpperCase();
+    }
+
+    function splitRoute(routeText) {
+      if (!routeText) return [];
+      return String(routeText)
+        .split(/[-–>\/\s]+/)
+        .map(cleanAirportCode)
+        .filter(Boolean);
+    }
+
+    function pick(source, keys) {
+      if (!source || typeof source !== "object" || Array.isArray(source)) return "";
+      for (const key of keys) {
+        if (source[key]) return source[key];
+      }
+      return "";
+    }
+
+    function emptyEnrichment() {
+      return {
+        aircraftType: "Unknown",
+        registration: "Unknown",
+        origin: "Unknown",
+        destination: "Unknown"
+      };
+    }
+
+    function formatNumber(value, unit) {
+      if (value === null || value === undefined || Number.isNaN(value)) return "Unknown";
+      return `${Number(value).toLocaleString()} ${unit}`;
+    }
+
+    function formatTime(date) {
+      return new Intl.DateTimeFormat(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }).format(date);
+    }
+
+    function setLoading(isLoading) {
+      state.isLoading = isLoading;
+      elements.toolbar.classList.toggle("is-loading", isLoading);
+      elements.refreshButton.disabled = isLoading;
+      elements.refreshLabel.textContent = isLoading ? "Scanning..." : "Refresh radar";
+    }
+
+    function showNotice(message) {
+      elements.notice.textContent = message;
+      elements.notice.classList.add("show");
+    }
+
+    function hideNotice() {
+      elements.notice.classList.remove("show");
+      elements.notice.textContent = "";
+    }
+
+    function startCountdown() {
+      clearInterval(state.countdownTimer);
+      state.countdownTimer = setInterval(() => {
+        const seconds = Math.max(0, Math.ceil((state.nextRefreshAt - Date.now()) / 1000));
+        elements.countdown.textContent = state.isLoading ? "Refreshing now" : `Auto refresh in ${seconds}s`;
+      }, 250);
+    }
+
+    function scheduleAutoRefresh() {
+      clearTimeout(state.autoRefreshTimer);
+      state.nextRefreshAt = Date.now() + AUTO_REFRESH_SECONDS * 1000;
+      state.autoRefreshTimer = setTimeout(() => refreshFlights(), AUTO_REFRESH_SECONDS * 1000);
+    }
+
+    function readJson(key) {
+      try {
+        const value = localStorage.getItem(key);
+        return value ? JSON.parse(value) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function writeJson(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch {
+        // Storage can be unavailable in strict/private browser modes; live data still works.
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[char]));
+    }
+  </script>
+</body>
+</html>
