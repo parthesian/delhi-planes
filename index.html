@@ -192,26 +192,6 @@
       opacity: 0.72;
     }
 
-    .countdown {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      justify-content: center;
-      min-height: 46px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 0 12px;
-      color: var(--muted);
-      background: rgba(15, 23, 42, 0.5);
-      font-size: 0.9rem;
-      transition: opacity 0.25s ease, border-color 0.25s ease;
-    }
-
-    .countdown.is-paused {
-      border-color: rgba(251, 191, 36, 0.26);
-      color: #fde68a;
-    }
-
     .spinner {
       display: none;
       width: 15px;
@@ -715,15 +695,6 @@
         width: min(420px, 100%);
       }
 
-      .controls {
-        grid-template-columns: minmax(0, 1fr) auto;
-        align-items: center;
-      }
-
-      .countdown {
-        padding: 0 16px;
-      }
-
       .section-heading {
         display: flex;
         align-items: end;
@@ -787,9 +758,6 @@
         <div>
           <div class="eyebrow"><span class="pulse"></span> Dwarka Sector 9 · facing south</div>
           <h1>Plane Spotter</h1>
-          <p class="subtitle">
-            Live radar near Dwarka Sector 9 for IGI departure paths. Low and close aircraft show first.
-          </p>
         </div>
 
         <div class="toolbar" id="toolbar">
@@ -808,7 +776,6 @@
               <span class="spinner" aria-hidden="true"></span>
               <span id="refreshLabel">Refresh</span>
             </button>
-            <div class="countdown" id="countdown">Updates quietly</div>
           </div>
         </div>
       </div>
@@ -858,15 +825,13 @@
     const BOUNDS = { minLat: 28.45, maxLat: 28.70, minLon: 77.00, maxLon: 77.25 };
     const AUTO_REFRESH_MS = 5 * 60 * 1000;
     const AUTO_REFRESH_WINDOW_MS = 60 * 60 * 1000;
-    const OPENSKY_CACHE_MS = 5 * 60 * 1000;
-    const ENRICHMENT_CACHE_MS = 12 * 60 * 60 * 1000;
     const MAP_UNITS_PER_KM = 1.15;
     const TRAIL_POINT_LIMIT = 8;
     const THREE_MODULE_URL = "https://unpkg.com/three@0.165.0/build/three.module.js";
     const FLIGHTS_API_URL = "/api/flights";
     const DIRECT_OPENSKY_URL = "https://opensky-network.org/api/states/all?lamin=28.45&lomin=77.00&lamax=28.70&lomax=77.25";
-    const CACHE_KEY = "plane-spotter:last-open-sky";
-    const ENRICHMENT_KEY = "plane-spotter:enrichment:";
+
+    const enrichmentCache = new Map();
 
     const AIRLINES = {
       AIC: "Air India",
@@ -957,13 +922,12 @@
       flights: [],
       isLoading: false,
       lastUpdatedAt: null,
-      nextRefreshAt: null,
       autoRefreshStartedAt: null,
       autoRefreshExpired: false,
       selectedFlightKey: null,
       flightTrails: new Map(),
-      countdownTimer: null,
-      autoRefreshTimer: null
+      autoRefreshTimer: null,
+      lastSnapshot: null
     };
 
     const flightMap = {
@@ -988,7 +952,6 @@
       aircraftCount: document.getElementById("aircraftCount"),
       refreshButton: document.getElementById("refreshButton"),
       refreshLabel: document.getElementById("refreshLabel"),
-      countdown: document.getElementById("countdown"),
       notice: document.getElementById("notice"),
       mapStage: document.getElementById("flightMapStage"),
       mapFallback: document.getElementById("mapFallback"),
@@ -999,7 +962,7 @@
     };
 
     elements.refreshButton.addEventListener("click", () => {
-      refreshFlights({ restartAutoRefresh: true, forceNetwork: true });
+      refreshFlights({ restartAutoRefresh: true });
     });
     elements.flightGrid.addEventListener("click", (event) => {
       const card = event.target.closest(".flight-card");
@@ -1013,17 +976,16 @@
       selectFlight(card.dataset.flightKey);
     });
     initFlightMap();
-    startCountdown();
     refreshFlights({ restartAutoRefresh: true });
 
-    async function refreshFlights({ restartAutoRefresh = false, forceNetwork = false } = {}) {
+    async function refreshFlights({ restartAutoRefresh = false } = {}) {
       if (state.isLoading) return;
       if (restartAutoRefresh) startAutoRefreshSession();
       setLoading(true);
       hideNotice();
 
       try {
-        const snapshot = await getFlightSnapshot({ forceNetwork });
+        const snapshot = await getFlightSnapshot();
         const flights = normalizeStates(snapshot.states || []);
         const enrichedFlights = await enrichFlights(flights, snapshot.enrichment || {});
 
@@ -1035,11 +997,13 @@
           showNotice("Using the latest available flight feed.");
         }
       } catch (error) {
-        const cached = readJson(CACHE_KEY);
-        if (cached?.payload?.states) {
-          const flights = await enrichFlights(normalizeStates(cached.payload.states));
+        if (state.lastSnapshot?.states) {
+          const flights = await enrichFlights(
+            normalizeStates(state.lastSnapshot.states),
+            state.lastSnapshot.enrichment || {}
+          );
           state.flights = flights.sort((a, b) => a.sortAltitude - b.sortAltitude);
-          state.lastUpdatedAt = new Date(cached.receivedAt);
+          state.lastUpdatedAt = new Date(state.lastSnapshot.receivedAt);
           render();
           showNotice("Could not refresh flights. Showing the last update.");
         } else {
@@ -1053,13 +1017,7 @@
       }
     }
 
-    async function getFlightSnapshot({ forceNetwork = false } = {}) {
-      const cached = readJson(CACHE_KEY);
-      const cacheAge = cached ? Date.now() - cached.receivedAt : Infinity;
-      if (!forceNetwork && cached && cacheAge < OPENSKY_CACHE_MS) {
-        return { ...cached.payload, receivedAt: cached.receivedAt, fromCache: true };
-      }
-
+    async function getFlightSnapshot() {
       const payload = await fetchCloudflareFlights().catch(async (cloudflareError) => {
         if (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1") {
           return fetchDirectOpenSky();
@@ -1068,8 +1026,9 @@
       });
 
       const receivedAt = Date.now();
-      writeJson(CACHE_KEY, { receivedAt, payload });
-      return { ...payload, receivedAt, fromCache: false };
+      const snapshot = { ...payload, receivedAt };
+      state.lastSnapshot = snapshot;
+      return snapshot;
     }
 
     async function fetchCloudflareFlights() {
@@ -1191,18 +1150,16 @@
     }
 
     async function cachedFetch(cacheName, url, mapper) {
-      const key = ENRICHMENT_KEY + cacheName;
-      const cached = readJson(key);
-      if (cached && Date.now() - cached.receivedAt < ENRICHMENT_CACHE_MS) {
-        return cached.payload || {};
+      if (enrichmentCache.has(cacheName)) {
+        return enrichmentCache.get(cacheName);
       }
 
       try {
-        const response = await fetch(url);
+        const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) return {};
         const data = await response.json();
         const payload = mapper(data) || {};
-        writeJson(key, { receivedAt: Date.now(), payload });
+        enrichmentCache.set(cacheName, payload);
         return payload;
       } catch {
         return {};
@@ -1905,26 +1862,15 @@
       elements.notice.textContent = "";
     }
 
-    function startCountdown() {
-      clearInterval(state.countdownTimer);
-      updateCountdown();
-      state.countdownTimer = setInterval(updateCountdown, 1000);
-    }
-
     function scheduleAutoRefresh() {
       clearTimeout(state.autoRefreshTimer);
       if (!hasActiveAutoRefreshSession()) {
-        state.nextRefreshAt = null;
         state.autoRefreshExpired = Boolean(state.autoRefreshStartedAt);
-        updateCountdown();
         return;
       }
 
       const expiresAt = state.autoRefreshStartedAt + AUTO_REFRESH_WINDOW_MS;
       const delay = Math.min(AUTO_REFRESH_MS, Math.max(0, expiresAt - Date.now()));
-
-      state.nextRefreshAt = Date.now() + delay;
-      updateCountdown();
 
       state.autoRefreshTimer = setTimeout(() => {
         if (!hasActiveAutoRefreshSession()) {
@@ -1945,34 +1891,6 @@
         state.autoRefreshStartedAt &&
         Date.now() - state.autoRefreshStartedAt < AUTO_REFRESH_WINDOW_MS
       );
-    }
-
-    function updateCountdown() {
-      elements.countdown.classList.toggle("is-paused", state.autoRefreshExpired);
-      if (state.isLoading) {
-        elements.countdown.textContent = "Refreshing";
-      } else if (state.autoRefreshExpired) {
-        elements.countdown.textContent = "Paused";
-      } else {
-        elements.countdown.textContent = "Updates quietly";
-      }
-    }
-
-    function readJson(key) {
-      try {
-        const value = localStorage.getItem(key);
-        return value ? JSON.parse(value) : null;
-      } catch {
-        return null;
-      }
-    }
-
-    function writeJson(key, value) {
-      try {
-        localStorage.setItem(key, JSON.stringify(value));
-      } catch {
-        // Storage can be unavailable in strict/private browser modes; live data still works.
-      }
     }
 
     function escapeHtml(value) {

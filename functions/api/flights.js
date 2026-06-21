@@ -2,7 +2,8 @@ const OPENSKY_URL = "https://opensky-network.org/api/states/all?lamin=28.45&lomi
 const OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
 const AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
 const MAX_ENRICHED_FLIGHTS = 20;
-const FLIGHT_CACHE_TTL_SECONDS = 5 * 60;
+const FLIGHT_CACHE_TTL_SECONDS = 60;
+const ENRICHMENT_CACHE_TTL_SECONDS = 60 * 60;
 const BOUNDS = {
   minLat: 28.45,
   maxLat: 28.70,
@@ -12,7 +13,7 @@ const BOUNDS = {
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
-  "cache-control": `public, max-age=${FLIGHT_CACHE_TTL_SECONDS}, s-maxage=${FLIGHT_CACHE_TTL_SECONDS}`
+  "cache-control": "no-store"
 };
 
 let openSkyTokenCache = null;
@@ -101,36 +102,43 @@ async function getOpenSkyToken(env, { forceRefresh = false } = {}) {
     return openSkyTokenCache.accessToken;
   }
 
-  const body = new URLSearchParams();
-  body.set("grant_type", "client_credentials");
-  body.set("client_id", clientId);
-  body.set("client_secret", clientSecret);
+  try {
+    const body = new URLSearchParams();
+    body.set("grant_type", "client_credentials");
+    body.set("client_id", clientId);
+    body.set("client_secret", clientSecret);
 
-  const openSkyResponse = await fetch(OPENSKY_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      "accept": "application/json"
-    },
-    body
-  });
+    const openSkyResponse = await fetch(OPENSKY_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "accept": "application/json"
+      },
+      body
+    });
 
-  if (!openSkyResponse.ok) {
-    throw new Error(`OpenSky token request returned ${openSkyResponse.status}`);
+    if (!openSkyResponse.ok) {
+      console.warn(`OpenSky token request returned ${openSkyResponse.status}; using anonymous access.`);
+      return "";
+    }
+
+    const payload = await openSkyResponse.json();
+    if (!payload.access_token) {
+      console.warn("OpenSky token response did not include an access token; using anonymous access.");
+      return "";
+    }
+
+    const expiresInMs = Number(payload.expires_in || 1800) * 1000;
+    openSkyTokenCache = {
+      accessToken: payload.access_token,
+      expiresAt: now + expiresInMs
+    };
+
+    return openSkyTokenCache.accessToken;
+  } catch (error) {
+    console.warn(`OpenSky token request failed: ${error.message || "unknown error"}; using anonymous access.`);
+    return "";
   }
-
-  const payload = await openSkyResponse.json();
-  if (!payload.access_token) {
-    throw new Error("OpenSky token response did not include an access token");
-  }
-
-  const expiresInMs = Number(payload.expires_in || 1800) * 1000;
-  openSkyTokenCache = {
-    accessToken: payload.access_token,
-    expiresAt: now + expiresInMs
-  };
-
-  return openSkyTokenCache.accessToken;
 }
 
 async function fetchFallbackStates() {
@@ -239,7 +247,7 @@ async function fetchJson(url) {
     const response = await fetch(url, {
       cf: {
         cacheEverything: true,
-        cacheTtl: 60 * 60 * 12
+        cacheTtl: ENRICHMENT_CACHE_TTL_SECONDS
       },
       headers: {
         "accept": "application/json",
