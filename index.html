@@ -895,6 +895,7 @@
     const PROJECTED_ROUTE_MIN_KM = 4;
     const PROJECTED_ROUTE_MAX_KM = 18;
     const PROJECTED_ROUTE_MINUTES = 2;
+    const AIRPLANE_GLYPH_BASELINE_DEGREES = 90;
     const FLIGHTS_API_URL = "/api/flights";
     const DIRECT_AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
     const ADSBDB_CALLSIGN_URL = "https://api.adsbdb.com/v0/callsign/";
@@ -1418,7 +1419,9 @@
     }
 
     function createFlightIcon(flight, selected) {
-      const heading = flight.headingDegrees ?? 0;
+      const heading = Number.isFinite(flight.headingDegrees)
+        ? flight.headingDegrees - AIRPLANE_GLYPH_BASELINE_DEGREES
+        : 0;
       return L.divIcon({
         className: `flight-marker${selected ? " is-selected" : ""}`,
         html: `<div class="flight-arrow" style="transform: rotate(${heading}deg)">✈</div>`,
