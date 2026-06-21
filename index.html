@@ -884,7 +884,7 @@
     const MAP_ZOOM = 10;
     const TRAIL_POINT_LIMIT = 8;
     const FLIGHTS_API_URL = "/api/flights";
-    const DIRECT_OPENSKY_URL = "https://opensky-network.org/api/states/all?lamin=28.45&lomin=77.00&lamax=28.70&lomax=77.25";
+    const DIRECT_AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
 
     const enrichmentCache = new Map();
 
@@ -1068,7 +1068,7 @@
     async function getFlightSnapshot() {
       const payload = await fetchCloudflareFlights().catch(async (cloudflareError) => {
         if (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1") {
-          return fetchDirectOpenSky();
+          return fetchDirectAircraftFeed();
         }
         throw cloudflareError;
       });
@@ -1088,13 +1088,16 @@
       return payload;
     }
 
-    async function fetchDirectOpenSky() {
-      const response = await fetch(DIRECT_OPENSKY_URL, { cache: "no-store" });
+    async function fetchDirectAircraftFeed() {
+      const response = await fetch(DIRECT_AIRPLANES_LIVE_URL, { cache: "no-store" });
       const payload = await parseJsonResponse(response);
       if (!response.ok) {
         throw new Error(payload.error || `Flight feed returned ${response.status}.`);
       }
-      return payload;
+      return {
+        source: "airplanes-live-direct",
+        states: adsbAircraftToStates(payload.ac || [])
+      };
     }
 
     async function parseJsonResponse(response) {
@@ -1140,6 +1143,60 @@
             enrichment: emptyEnrichment()
           };
         });
+    }
+
+    function adsbAircraftToStates(aircraft) {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+
+      return aircraft
+        .filter((item) => item.lat !== undefined && item.lon !== undefined)
+        .filter((item) => item.lat >= BOUNDS.minLat && item.lat <= BOUNDS.maxLat)
+        .filter((item) => item.lon >= BOUNDS.minLon && item.lon <= BOUNDS.maxLon)
+        .map((item) => {
+          const altitudeFeet = numericAdsbAltitude(item.alt_geom ?? item.alt_baro);
+          const baroAltitudeFeet = numericAdsbAltitude(item.alt_baro ?? item.alt_geom);
+          const lastSeenSeconds = Number.isFinite(item.seen) ? Math.max(0, Math.round(item.seen)) : 0;
+
+          return [
+            item.hex || "",
+            item.flight || "",
+            item.country || "Unknown",
+            nowSeconds - lastSeenSeconds,
+            nowSeconds - lastSeenSeconds,
+            item.lon,
+            item.lat,
+            adsbFeetToMeters(baroAltitudeFeet),
+            item.alt_baro === "ground",
+            adsbKnotsToMetersPerSecond(item.gs),
+            item.track ?? item.true_heading ?? item.mag_heading ?? null,
+            adsbFeetPerMinuteToMetersPerSecond(item.geom_rate ?? item.baro_rate),
+            null,
+            adsbFeetToMeters(altitudeFeet),
+            item.squawk || null,
+            false,
+            0
+          ];
+        });
+    }
+
+    function numericAdsbAltitude(value) {
+      if (value === "ground" || value === undefined || value === null) return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function adsbFeetToMeters(value) {
+      return value === null ? null : value / 3.28084;
+    }
+
+    function adsbKnotsToMetersPerSecond(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed / 1.94384 : null;
+    }
+
+    function adsbFeetPerMinuteToMetersPerSecond(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed * 0.00508 : null;
     }
 
     async function enrichFlights(flights, serverEnrichment = {}) {
