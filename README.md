@@ -15,6 +15,7 @@ Open `index.html` in a browser to see current aircraft inside the local IGI / Dw
 
 - Primary aircraft feed: `https://api.airplanes.live/v2/point/28.5796008/77.0702411/35`
 - Backup aircraft feed: `https://api.adsb.lol/v2/point/28.5796008/77.0702411/35`
+- Filtered Delhi route table: `functions/api/delhi-routes.js` generated from VRS standing data routes touching `VIDP`
 - HexDB aircraft lookup: `https://hexdb.io/api/v1/aircraft/{icao24}`
 - HexDB route lookup: `https://hexdb.io/api/v1/route/icao/{callsign}`
 - ADSBDB route lookup fallback: `https://api.adsbdb.com/v0/callsign/{callsign}`

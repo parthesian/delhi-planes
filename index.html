@@ -886,6 +886,7 @@
     const FLIGHTS_API_URL = "/api/flights";
     const DIRECT_AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
     const ADSBDB_CALLSIGN_URL = "https://api.adsbdb.com/v0/callsign/";
+    const DELHI_AIRPORT_CODE = "VIDP";
 
     const enrichmentCache = new Map();
 
@@ -1229,7 +1230,7 @@
 
         const [aircraft, route] = await Promise.all([
           fetchAircraft(flight.icao24),
-          fetchRoute(flight.callsign)
+          fetchRoute(flight.callsign, flight)
         ]);
 
         return {
@@ -1254,17 +1255,19 @@
       }));
     }
 
-    async function fetchRoute(callsign) {
+    async function fetchRoute(callsign, flight) {
       if (!callsign) return {};
       const hexDbRoute = await fetchHexDbRoute(callsign);
-      if (hexDbRoute.origin && hexDbRoute.destination) return hexDbRoute;
+      if (hexDbRoute.origin && hexDbRoute.destination) {
+        return applyDelhiRouteInference(hexDbRoute, flight);
+      }
 
       const adsbDbRoute = await fetchAdsbDbRoute(callsign);
-      return {
+      return applyDelhiRouteInference({
         origin: adsbDbRoute.origin || hexDbRoute.origin,
         destination: adsbDbRoute.destination || hexDbRoute.destination,
         airline: adsbDbRoute.airline || ""
-      };
+      }, flight);
     }
 
     async function fetchHexDbRoute(callsign) {
@@ -1291,6 +1294,24 @@
           airline: route.airline?.name || ""
         };
       });
+    }
+
+    function applyDelhiRouteInference(route, flight) {
+      if (!flight) return route;
+      const isLowNearDelhi = flight.distanceKm <= 35 &&
+        (flight.altitudeFeet === null || flight.altitudeFeet <= 7000);
+
+      if (!isLowNearDelhi) return route;
+
+      if (Number.isFinite(flight.verticalRate) && flight.verticalRate < -1.5) {
+        return { ...route, destination: DELHI_AIRPORT_CODE };
+      }
+
+      if (Number.isFinite(flight.verticalRate) && flight.verticalRate > 1.5) {
+        return { ...route, origin: DELHI_AIRPORT_CODE };
+      }
+
+      return route;
     }
 
     async function cachedFetch(cacheName, url, mapper) {

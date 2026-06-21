@@ -1,3 +1,5 @@
+import { DELHI_ROUTES } from "./delhi-routes.js";
+
 const AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
 const ADSB_LOL_URL = "https://api.adsb.lol/v2/point/28.5796008/77.0702411/35";
 const ADSBDB_CALLSIGN_URL = "https://api.adsbdb.com/v0/callsign/";
@@ -10,6 +12,8 @@ const BOUNDS = {
   minLon: 77.00,
   maxLon: 77.25
 };
+const OBSERVER = { lat: 28.5796008, lon: 77.0702411 };
+const DELHI_AIRPORT_CODE = "VIDP";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -123,7 +127,7 @@ async function enrichStates(states, feedEnrichment = {}) {
 
     const [aircraft, route] = await Promise.all([
       fromFeed.aircraftType && fromFeed.registration ? Promise.resolve({}) : fetchAircraft(icao24),
-      fetchRoute(callsign)
+      fetchRoute(callsign, state)
     ]);
 
     return [icao24, {
@@ -149,17 +153,60 @@ async function fetchAircraft(icao24) {
   };
 }
 
-async function fetchRoute(callsign) {
+async function fetchRoute(callsign, state) {
   if (!callsign) return {};
 
+  const delhiRoute = fetchLocalDelhiRoute(callsign, state);
+  if (delhiRoute.origin && delhiRoute.destination) return delhiRoute;
+
   const hexDbRoute = await fetchHexDbRoute(callsign);
-  if (hexDbRoute.origin && hexDbRoute.destination) return hexDbRoute;
+  if (hexDbRoute.origin && hexDbRoute.destination) {
+    return applyDelhiRouteInference(hexDbRoute, state);
+  }
 
   const adsbDbRoute = await fetchAdsbDbRoute(callsign);
-  return {
+  return applyDelhiRouteInference({
     origin: adsbDbRoute.origin || hexDbRoute.origin,
     destination: adsbDbRoute.destination || hexDbRoute.destination,
     airline: adsbDbRoute.airline || ""
+  }, state);
+}
+
+function fetchLocalDelhiRoute(callsign, state) {
+  const airportCodes = DELHI_ROUTES[callsign]?.split("-").map(cleanAirportCode).filter(Boolean);
+  if (!airportCodes?.length) return {};
+
+  return applyDelhiRouteInference(routeFromAirportCodes(airportCodes, state), state);
+}
+
+function routeFromAirportCodes(airportCodes, state) {
+  if (!airportCodes.includes(DELHI_AIRPORT_CODE)) {
+    return {
+      origin: airportCodes[0],
+      destination: airportCodes[airportCodes.length - 1]
+    };
+  }
+
+  const verticalRate = Array.isArray(state) ? state[11] : null;
+  if (Number.isFinite(verticalRate) && verticalRate < -1.5) {
+    const delhiIndex = airportCodes.lastIndexOf(DELHI_AIRPORT_CODE);
+    return {
+      origin: airportCodes[Math.max(0, delhiIndex - 1)] || airportCodes[0],
+      destination: DELHI_AIRPORT_CODE
+    };
+  }
+
+  if (Number.isFinite(verticalRate) && verticalRate > 1.5) {
+    const delhiIndex = airportCodes.indexOf(DELHI_AIRPORT_CODE);
+    return {
+      origin: DELHI_AIRPORT_CODE,
+      destination: airportCodes[delhiIndex + 1] || airportCodes[airportCodes.length - 1]
+    };
+  }
+
+  return {
+    origin: airportCodes[0],
+    destination: airportCodes[airportCodes.length - 1]
   };
 }
 
@@ -186,6 +233,49 @@ async function fetchAdsbDbRoute(callsign) {
     destination: cleanAirportCode(route.destination?.icao_code || route.destination?.iata_code),
     airline: route.airline?.name || ""
   };
+}
+
+function applyDelhiRouteInference(route, state) {
+  if (!Array.isArray(state)) return route;
+
+  const longitude = state[5];
+  const latitude = state[6];
+  const altitudeMeters = state[13] ?? state[7];
+  const verticalRate = state[11];
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return route;
+
+  const altitudeFeet = altitudeMeters === null || altitudeMeters === undefined
+    ? null
+    : altitudeMeters * 3.28084;
+  const distanceKm = distanceFromObserver(latitude, longitude);
+  const isLowNearDelhi = distanceKm <= 35 && (altitudeFeet === null || altitudeFeet <= 7000);
+
+  if (!isLowNearDelhi) return route;
+
+  if (Number.isFinite(verticalRate) && verticalRate < -1.5) {
+    return { ...route, destination: DELHI_AIRPORT_CODE };
+  }
+
+  if (Number.isFinite(verticalRate) && verticalRate > 1.5) {
+    return { ...route, origin: DELHI_AIRPORT_CODE };
+  }
+
+  return route;
+}
+
+function distanceFromObserver(lat, lon) {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(lat - OBSERVER.lat);
+  const dLon = toRadians(lon - OBSERVER.lon);
+  const lat1 = toRadians(OBSERVER.lat);
+  const lat2 = toRadians(lat);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function toRadians(degrees) {
+  return degrees * Math.PI / 180;
 }
 
 async function fetchJson(url) {
