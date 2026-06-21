@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plane Spotter</title>
   <meta name="description" content="A simple real-time plane spotting dashboard for Dwarka Sector 9, Delhi.">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <style>
     :root {
       color-scheme: dark;
@@ -265,15 +266,69 @@
       overflow: hidden;
       border: 1px solid rgba(56, 189, 248, 0.16);
       border-radius: 24px;
-      background:
-        radial-gradient(circle at center, rgba(56, 189, 248, 0.14), transparent 18rem),
-        linear-gradient(160deg, rgba(2, 6, 23, 0.86), rgba(15, 23, 42, 0.98));
+      background: #0f172a;
     }
 
-    .map-stage canvas {
-      display: block;
+    .map-stage .leaflet-container {
       width: 100%;
       height: 100%;
+      min-height: 360px;
+      border-radius: 24px;
+      background: #0f172a;
+      font: inherit;
+    }
+
+    .observer-marker,
+    .flight-marker {
+      background: none;
+      border: none;
+    }
+
+    .observer-pin {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fbbf24;
+      border: 3px solid #fff;
+      box-shadow: 0 0 12px rgba(251, 191, 36, 0.6);
+    }
+
+    .flight-arrow {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      font-size: 18px;
+      color: #38bdf8;
+      text-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+      transition: color 0.2s ease;
+    }
+
+    .flight-marker.is-selected .flight-arrow {
+      color: #fbbf24;
+      font-size: 22px;
+      text-shadow: 0 0 12px rgba(251, 191, 36, 0.6);
+    }
+
+    .leaflet-control-zoom a {
+      background: rgba(15, 23, 42, 0.92);
+      color: #e5eefb;
+      border-color: rgba(148, 163, 184, 0.28);
+    }
+
+    .leaflet-control-zoom a:hover {
+      background: rgba(30, 41, 59, 0.96);
+      color: #fff;
+    }
+
+    .leaflet-control-attribution {
+      background: rgba(15, 23, 42, 0.78) !important;
+      color: var(--muted) !important;
+      font-size: 0.65rem;
+    }
+
+    .leaflet-control-attribution a {
+      color: #bae6fd;
     }
 
     .map-fallback {
@@ -820,14 +875,14 @@
 
   </main>
 
-  <script type="module">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
     const OBSERVER = { lat: 28.5796008, lon: 77.0702411 };
     const BOUNDS = { minLat: 28.45, maxLat: 28.70, minLon: 77.00, maxLon: 77.25 };
     const AUTO_REFRESH_MS = 5 * 60 * 1000;
     const AUTO_REFRESH_WINDOW_MS = 60 * 60 * 1000;
-    const MAP_UNITS_PER_KM = 1.15;
+    const MAP_ZOOM = 10;
     const TRAIL_POINT_LIMIT = 8;
-    const THREE_MODULE_URL = "https://unpkg.com/three@0.165.0/build/three.module.js";
     const FLIGHTS_API_URL = "/api/flights";
     const DIRECT_OPENSKY_URL = "https://opensky-network.org/api/states/all?lamin=28.45&lomin=77.00&lamax=28.70&lomax=77.25";
 
@@ -931,19 +986,12 @@
     };
 
     const flightMap = {
-      THREE: null,
-      renderer: null,
-      scene: null,
-      camera: null,
-      raycaster: null,
-      pointer: null,
-      markerGroup: null,
-      trailGroup: null,
+      map: null,
       markers: new Map(),
       trails: new Map(),
-      animationFrame: null,
-      ready: false,
-      reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      boundsRect: null,
+      observerMarker: null,
+      ready: false
     };
 
     const elements = {
@@ -1183,106 +1231,70 @@
       updateSelectedFlightUi();
     }
 
-    async function initFlightMap() {
+    function initFlightMap() {
       if (!elements.mapStage) return;
 
+      if (typeof L === "undefined") {
+        elements.mapFallback.textContent = "Map unavailable. Flight details still update below.";
+        return;
+      }
+
       try {
-        flightMap.THREE = await import(THREE_MODULE_URL);
-        setupFlightMapScene();
-        updateFlightMap(state.flights);
+        flightMap.map = L.map(elements.mapStage, {
+          center: [OBSERVER.lat, OBSERVER.lon],
+          zoom: MAP_ZOOM,
+          zoomControl: true,
+          attributionControl: true
+        });
+
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(flightMap.map);
+
+        const observerIcon = L.divIcon({
+          className: "observer-marker",
+          html: '<div class="observer-pin" aria-hidden="true"></div>',
+          iconSize: [24, 24],
+          iconAnchor: [12, 12]
+        });
+        flightMap.observerMarker = L.marker([OBSERVER.lat, OBSERVER.lon], {
+          icon: observerIcon,
+          zIndexOffset: 1000,
+          interactive: false
+        })
+          .bindTooltip("You", { direction: "top", offset: [0, -8] })
+          .addTo(flightMap.map);
+
+        flightMap.boundsRect = L.rectangle(
+          [[BOUNDS.minLat, BOUNDS.minLon], [BOUNDS.maxLat, BOUNDS.maxLon]],
+          {
+            color: "#38bdf8",
+            weight: 2,
+            fillColor: "#38bdf8",
+            fillOpacity: 0.06,
+            dashArray: "6 4"
+          }
+        ).addTo(flightMap.map);
+
         elements.mapFallback.classList.add("is-hidden");
+        flightMap.ready = true;
+
+        window.addEventListener("resize", () => flightMap.map?.invalidateSize());
+        updateFlightMap(state.flights);
       } catch {
         elements.mapFallback.textContent = "Map unavailable. Flight details still update below.";
       }
     }
 
-    function setupFlightMapScene() {
-      const THREE = flightMap.THREE;
-      const { clientWidth, clientHeight } = elements.mapStage;
-
-      flightMap.scene = new THREE.Scene();
-      flightMap.scene.background = new THREE.Color(0x06101f);
-
-      flightMap.camera = new THREE.PerspectiveCamera(46, clientWidth / Math.max(clientHeight, 1), 0.1, 220);
-      flightMap.camera.position.set(0, 46, 42);
-      flightMap.camera.lookAt(0, 0, 0);
-
-      flightMap.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      flightMap.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-      flightMap.renderer.setSize(clientWidth, clientHeight);
-      elements.mapStage.appendChild(flightMap.renderer.domElement);
-
-      flightMap.raycaster = new THREE.Raycaster();
-      flightMap.pointer = new THREE.Vector2();
-      flightMap.markerGroup = new THREE.Group();
-      flightMap.trailGroup = new THREE.Group();
-      flightMap.scene.add(flightMap.trailGroup, flightMap.markerGroup);
-
-      flightMap.scene.add(new THREE.AmbientLight(0x7dd3fc, 0.7));
-      const keyLight = new THREE.DirectionalLight(0xffffff, 1.4);
-      keyLight.position.set(12, 24, 18);
-      flightMap.scene.add(keyLight);
-
-      addMapGround();
-      addObserverMarker();
-      addBoundsOutline();
-
-      flightMap.renderer.domElement.addEventListener("pointerdown", handleMapPointerDown);
-      window.addEventListener("resize", resizeFlightMap);
-      flightMap.ready = true;
-      animateFlightMap();
-    }
-
-    function addMapGround() {
-      const THREE = flightMap.THREE;
-      const ground = new THREE.Mesh(
-        new THREE.PlaneGeometry(44, 44),
-        new THREE.MeshBasicMaterial({ color: 0x0f1e32, transparent: true, opacity: 0.72 })
-      );
-      ground.rotation.x = -Math.PI / 2;
-      flightMap.scene.add(ground);
-
-      const grid = new THREE.GridHelper(44, 16, 0x38bdf8, 0x1e3a5f);
-      grid.material.transparent = true;
-      grid.material.opacity = 0.36;
-      flightMap.scene.add(grid);
-    }
-
-    function addObserverMarker() {
-      const THREE = flightMap.THREE;
-      const marker = new THREE.Group();
-      const pin = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.28, 0.28, 0.35, 24),
-        new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0x3a2600, roughness: 0.4 })
-      );
-      pin.position.y = 0.18;
-
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.75, 0.9, 48),
-        new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.82, side: THREE.DoubleSide })
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.03;
-
-      marker.add(pin, ring);
-      flightMap.scene.add(marker);
-    }
-
-    function addBoundsOutline() {
-      const THREE = flightMap.THREE;
-      const corners = [
-        latLonToMapPosition(BOUNDS.minLat, BOUNDS.minLon),
-        latLonToMapPosition(BOUNDS.minLat, BOUNDS.maxLon),
-        latLonToMapPosition(BOUNDS.maxLat, BOUNDS.maxLon),
-        latLonToMapPosition(BOUNDS.maxLat, BOUNDS.minLon),
-        latLonToMapPosition(BOUNDS.minLat, BOUNDS.minLon)
-      ];
-      const geometry = new THREE.BufferGeometry().setFromPoints(corners);
-      const line = new THREE.Line(
-        geometry,
-        new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.45 })
-      );
-      flightMap.scene.add(line);
+    function createFlightIcon(flight, selected) {
+      const heading = flight.headingDegrees ?? 0;
+      return L.divIcon({
+        className: `flight-marker${selected ? " is-selected" : ""}`,
+        html: `<div class="flight-arrow" style="transform: rotate(${heading}deg)">✈</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14]
+      });
     }
 
     function updateFlightMap(flights) {
@@ -1293,33 +1305,33 @@
       );
       const nextKeys = new Set(visibleFlights.map((flight) => flight.icao24));
 
-      flightMap.markers.forEach((entry, key) => {
+      flightMap.markers.forEach((marker, key) => {
         if (!nextKeys.has(key)) {
-          entry.removing = true;
-          entry.targetOpacity = 0;
-          entry.targetScale = 0.01;
+          flightMap.map.removeLayer(marker);
+          flightMap.markers.delete(key);
           removeTrail(key);
+          state.flightTrails.delete(key);
         }
       });
 
       visibleFlights.forEach((flight) => {
         const key = flight.icao24;
-        const position = latLonToMapPosition(flight.latitude, flight.longitude, flight.altitudeFeet);
-        appendTrailPoint(key, position);
+        const latLng = [flight.latitude, flight.longitude];
+        appendTrailPoint(key, latLng);
 
-        let entry = flightMap.markers.get(key);
-        if (!entry) {
-          entry = createFlightMarker(flight, position);
-          flightMap.markers.set(key, entry);
-          flightMap.markerGroup.add(entry.group);
+        const selected = state.selectedFlightKey === key;
+        let marker = flightMap.markers.get(key);
+
+        if (marker) {
+          marker.setLatLng(latLng);
+          marker.setIcon(createFlightIcon(flight, selected));
+        } else {
+          marker = L.marker(latLng, { icon: createFlightIcon(flight, selected) })
+            .on("click", () => selectFlight(key))
+            .addTo(flightMap.map);
+          flightMap.markers.set(key, marker);
         }
 
-        entry.flight = flight;
-        entry.targetPosition.copy(position);
-        entry.targetOpacity = 1;
-        entry.targetScale = state.selectedFlightKey === key ? 1.2 : 1;
-        entry.group.userData.flightKey = key;
-        entry.heading.rotation.y = headingToRadians(flight.headingDegrees);
         updateTrailLine(key);
       });
 
@@ -1328,194 +1340,51 @@
       }
     }
 
-    function createFlightMarker(flight, position) {
-      const THREE = flightMap.THREE;
-      const group = new THREE.Group();
-      group.position.copy(position);
-      group.scale.setScalar(0.01);
-      group.userData.flightKey = flight.icao24;
-
-      const heading = new THREE.Group();
-      heading.rotation.y = headingToRadians(flight.headingDegrees);
-
-      const body = new THREE.Mesh(
-        new THREE.ConeGeometry(0.55, 1.55, 3),
-        new THREE.MeshStandardMaterial({
-          color: 0x38bdf8,
-          emissive: 0x082f49,
-          roughness: 0.35,
-          transparent: true,
-          opacity: 0
-        })
-      );
-      body.rotation.x = Math.PI / 2;
-      body.userData.flightKey = flight.icao24;
-
-      const glow = new THREE.Mesh(
-        new THREE.SphereGeometry(0.82, 24, 16),
-        new THREE.MeshBasicMaterial({
-          color: 0x7dd3fc,
-          transparent: true,
-          opacity: 0
-        })
-      );
-      glow.scale.y = 0.18;
-      glow.userData.flightKey = flight.icao24;
-
-      const altitudeLine = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(0, -position.y + 0.04, 0),
-          new THREE.Vector3(0, 0, 0)
-        ]),
-        new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0 })
-      );
-      altitudeLine.userData.flightKey = flight.icao24;
-
-      heading.add(body);
-      group.add(altitudeLine, glow, heading);
-      setObjectOpacity(group, 0);
-
-      return {
-        group,
-        heading,
-        flight,
-        targetPosition: position.clone(),
-        targetOpacity: 1,
-        targetScale: 1,
-        removing: false
-      };
-    }
-
-    function appendTrailPoint(key, position) {
+    function appendTrailPoint(key, latLng) {
       const existing = state.flightTrails.get(key) || [];
       const last = existing[existing.length - 1];
-      if (!last || last.distanceTo(position) > 0.18) {
-        existing.push(position.clone());
+      if (!last || trailDistance(last, latLng) > 0.0003) {
+        existing.push([latLng[0], latLng[1]]);
       }
       state.flightTrails.set(key, existing.slice(-TRAIL_POINT_LIMIT));
     }
 
+    function trailDistance(a, b) {
+      const dLat = a[0] - b[0];
+      const dLon = a[1] - b[1];
+      return Math.sqrt(dLat * dLat + dLon * dLon);
+    }
+
     function updateTrailLine(key) {
-      const THREE = flightMap.THREE;
-      const points = state.flightTrails.get(key) || [];
       removeTrail(key);
+      const points = state.flightTrails.get(key) || [];
       if (points.length < 2) return;
 
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(points),
-        new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.62 })
-      );
+      const line = L.polyline(points, {
+        color: "#fbbf24",
+        weight: 2,
+        opacity: 0.65
+      });
+      line.addTo(flightMap.map);
       flightMap.trails.set(key, line);
-      flightMap.trailGroup.add(line);
     }
 
     function removeTrail(key) {
       const trail = flightMap.trails.get(key);
       if (!trail) return;
-      flightMap.trailGroup.remove(trail);
-      trail.geometry.dispose();
-      trail.material.dispose();
+      flightMap.map.removeLayer(trail);
       flightMap.trails.delete(key);
     }
 
-    function animateFlightMap() {
-      if (!flightMap.ready) return;
-      const lerpAmount = flightMap.reducedMotion ? 1 : 0.08;
-      const scaleLerp = flightMap.reducedMotion ? 1 : 0.12;
-
-      flightMap.markers.forEach((entry, key) => {
-        entry.group.position.lerp(entry.targetPosition, lerpAmount);
-        const nextScale = entry.group.scale.x + (entry.targetScale - entry.group.scale.x) * scaleLerp;
-        entry.group.scale.setScalar(nextScale);
-
-        const currentOpacity = entry.group.userData.opacity ?? 0;
-        const nextOpacity = currentOpacity + (entry.targetOpacity - currentOpacity) * scaleLerp;
-        entry.group.userData.opacity = nextOpacity;
-        setObjectOpacity(entry.group, nextOpacity);
-
-        if (entry.removing && nextOpacity < 0.03) {
-          flightMap.markerGroup.remove(entry.group);
-          disposeObject(entry.group);
-          flightMap.markers.delete(key);
-          state.flightTrails.delete(key);
-        }
-      });
-
-      flightMap.renderer.render(flightMap.scene, flightMap.camera);
-      flightMap.animationFrame = requestAnimationFrame(animateFlightMap);
-    }
-
-    function resizeFlightMap() {
-      if (!flightMap.ready) return;
-      const { clientWidth, clientHeight } = elements.mapStage;
-      flightMap.camera.aspect = clientWidth / Math.max(clientHeight, 1);
-      flightMap.camera.updateProjectionMatrix();
-      flightMap.renderer.setSize(clientWidth, clientHeight);
-    }
-
-    function latLonToMapPosition(lat, lon, altitudeFeet = 0) {
-      const latKm = (lat - OBSERVER.lat) * 111.32;
-      const lonKm = (lon - OBSERVER.lon) * 111.32 * Math.cos(toRadians(OBSERVER.lat));
-      const altitude = Math.min(Math.max(altitudeFeet || 0, 0), 42000);
-
-      return new flightMap.THREE.Vector3(
-        lonKm * MAP_UNITS_PER_KM,
-        0.65 + altitude / 4200,
-        -latKm * MAP_UNITS_PER_KM
-      );
-    }
-
-    function headingToRadians(degrees) {
-      if (degrees === null || Number.isNaN(degrees)) return 0;
-      return -toRadians(degrees);
-    }
-
-    function setObjectOpacity(object, opacity) {
-      object.traverse((child) => {
-        if (!child.material) return;
-        child.material.opacity = Math.min(Math.max(opacity, 0), 1);
-        child.material.transparent = true;
-      });
-    }
-
-    function disposeObject(object) {
-      object.traverse((child) => {
-        child.geometry?.dispose?.();
-        if (Array.isArray(child.material)) {
-          child.material.forEach((material) => material.dispose?.());
-        } else {
-          child.material?.dispose?.();
-        }
-      });
-    }
-
-    function handleMapPointerDown(event) {
-      if (!flightMap.ready) return;
-      const rect = flightMap.renderer.domElement.getBoundingClientRect();
-      flightMap.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      flightMap.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-      flightMap.raycaster.setFromCamera(flightMap.pointer, flightMap.camera);
-
-      const hits = flightMap.raycaster.intersectObjects(flightMap.markerGroup.children, true);
-      const flightKey = hits.map((hit) => findFlightKey(hit.object)).find(Boolean);
-      if (flightKey) selectFlight(flightKey);
-    }
-
-    function findFlightKey(object) {
-      let current = object;
-      while (current) {
-        if (current.userData?.flightKey) return current.userData.flightKey;
-        current = current.parent;
-      }
-      return "";
-    }
-
-    function selectFlight(flightKey) {
+    function selectFlight(flightKey, { pan = true } = {}) {
       const flight = state.flights.find((item) => item.icao24 === flightKey);
       if (!flight) return;
       state.selectedFlightKey = flightKey;
       renderSelectedFlightDetails();
       updateSelectedFlightUi();
+      if (pan && flightMap.ready && Number.isFinite(flight.latitude) && Number.isFinite(flight.longitude)) {
+        flightMap.map.panTo([flight.latitude, flight.longitude], { animate: true });
+      }
     }
 
     function updateSelectedFlightUi() {
@@ -1525,18 +1394,13 @@
         card.classList.toggle("is-selected", card.dataset.flightKey === selectedKey);
       });
 
-      flightMap.markers.forEach((entry, key) => {
-        entry.targetScale = key === selectedKey ? 1.2 : 1;
-        entry.group.traverse((child) => {
-          if (!child.material?.color) return;
-          if (key === selectedKey) {
-            child.material.color.set?.(0xfbbf24);
-          } else if (child.type === "Mesh") {
-            child.material.color.set?.(0x38bdf8);
-          } else if (child.type === "Line") {
-            child.material.color.set?.(0x7dd3fc);
-          }
-        });
+      if (!flightMap.ready) return;
+
+      flightMap.markers.forEach((marker, key) => {
+        const flight = state.flights.find((item) => item.icao24 === key);
+        if (flight) {
+          marker.setIcon(createFlightIcon(flight, key === selectedKey));
+        }
       });
     }
 
@@ -1849,7 +1713,6 @@
       elements.toolbar.classList.toggle("is-loading", isLoading);
       elements.refreshButton.disabled = isLoading;
       elements.refreshLabel.textContent = isLoading ? "Refreshing..." : "Refresh";
-      updateCountdown();
     }
 
     function showNotice(message) {

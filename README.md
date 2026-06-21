@@ -8,7 +8,7 @@ Open `index.html` in a browser to see current aircraft inside the local IGI / Dw
 - Includes a manual refresh button for an immediate new snapshot.
 - Uses light `localStorage` caching so scheduled refreshes stay gentle.
 - Enriches callsigns/ICAO hex IDs with best-effort airline, aircraft, registration, and route data.
-- Shows a Three.js local airspace map with aircraft positions, trails, and tap-to-view details.
+- Shows an OpenStreetMap view with aircraft positions, trails, and tap-to-view details.
 - Shows a mobile-first card layout plus a potential departure queue sorted around low/climbing aircraft.
 - Uses a Cloudflare Pages Function at `/api/flights` for the flight feed and enrichment.
 
@@ -31,7 +31,7 @@ python3 -m http.server 8788
 
 Then open `http://localhost:8788`.
 
-The local flight path map loads Three.js from a CDN ES module, so an internet connection is required for the 3D map. The flight cards and queue still work if the map library is unavailable.
+The local flight path map uses Leaflet with OpenStreetMap tiles, so an internet connection is required for the map. The flight cards and queue still work if the map library is unavailable.
 
 For the closest match to Cloudflare Pages Functions locally, use:
 
