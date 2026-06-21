@@ -1,5 +1,6 @@
 const AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
 const ADSB_LOL_URL = "https://api.adsb.lol/v2/point/28.5796008/77.0702411/35";
+const ADSBDB_CALLSIGN_URL = "https://api.adsbdb.com/v0/callsign/";
 const MAX_ENRICHED_FLIGHTS = 20;
 const FLIGHT_CACHE_TTL_SECONDS = 60;
 const ENRICHMENT_CACHE_TTL_SECONDS = 60 * 60;
@@ -128,7 +129,7 @@ async function enrichStates(states, feedEnrichment = {}) {
     return [icao24, {
       aircraftType: fromFeed.aircraftType || aircraft.type || aircraft.model || "Unknown",
       registration: fromFeed.registration || aircraft.registration || "Unknown",
-      airline: fromFeed.operator || "",
+      airline: fromFeed.operator || route.airline || "",
       origin: route.origin || "Unknown",
       destination: route.destination || "Unknown"
     }];
@@ -151,6 +152,18 @@ async function fetchAircraft(icao24) {
 async function fetchRoute(callsign) {
   if (!callsign) return {};
 
+  const hexDbRoute = await fetchHexDbRoute(callsign);
+  if (hexDbRoute.origin && hexDbRoute.destination) return hexDbRoute;
+
+  const adsbDbRoute = await fetchAdsbDbRoute(callsign);
+  return {
+    origin: adsbDbRoute.origin || hexDbRoute.origin,
+    destination: adsbDbRoute.destination || hexDbRoute.destination,
+    airline: adsbDbRoute.airline || ""
+  };
+}
+
+async function fetchHexDbRoute(callsign) {
   const data = await fetchJson(`https://hexdb.io/api/v1/route/icao/${encodeURIComponent(callsign)}`);
   const routeText = typeof data === "string" ? data : pick(data, ["route", "Route"]);
   const pieces = Array.isArray(data) ? data.map(cleanAirportCode).filter(Boolean) : splitRoute(routeText);
@@ -160,6 +173,18 @@ async function fetchRoute(callsign) {
   return {
     origin: cleanAirportCode(origin),
     destination: cleanAirportCode(destination)
+  };
+}
+
+async function fetchAdsbDbRoute(callsign) {
+  const data = await fetchJson(ADSBDB_CALLSIGN_URL + encodeURIComponent(callsign));
+  const route = data?.response?.flightroute;
+  if (!route) return {};
+
+  return {
+    origin: cleanAirportCode(route.origin?.icao_code || route.origin?.iata_code),
+    destination: cleanAirportCode(route.destination?.icao_code || route.destination?.iata_code),
+    airline: route.airline?.name || ""
   };
 }
 

@@ -885,6 +885,7 @@
     const TRAIL_POINT_LIMIT = 8;
     const FLIGHTS_API_URL = "/api/flights";
     const DIRECT_AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
+    const ADSBDB_CALLSIGN_URL = "https://api.adsbdb.com/v0/callsign/";
 
     const enrichmentCache = new Map();
 
@@ -1233,6 +1234,7 @@
 
         return {
           ...flight,
+          airline: route.airline || flight.airline,
           enrichment: {
             aircraftType: aircraft.type || aircraft.model || "Unknown",
             registration: aircraft.registration || "Unknown",
@@ -1254,6 +1256,18 @@
 
     async function fetchRoute(callsign) {
       if (!callsign) return {};
+      const hexDbRoute = await fetchHexDbRoute(callsign);
+      if (hexDbRoute.origin && hexDbRoute.destination) return hexDbRoute;
+
+      const adsbDbRoute = await fetchAdsbDbRoute(callsign);
+      return {
+        origin: adsbDbRoute.origin || hexDbRoute.origin,
+        destination: adsbDbRoute.destination || hexDbRoute.destination,
+        airline: adsbDbRoute.airline || ""
+      };
+    }
+
+    async function fetchHexDbRoute(callsign) {
       return cachedFetch(`route:${callsign}`, `https://hexdb.io/api/v1/route/icao/${encodeURIComponent(callsign)}`, (data) => {
         const routeText = typeof data === "string" ? data : pick(data, ["route", "Route"]);
         const pieces = Array.isArray(data) ? data : splitRoute(routeText);
@@ -1262,6 +1276,19 @@
         return {
           origin: cleanAirportCode(origin),
           destination: cleanAirportCode(destination)
+        };
+      });
+    }
+
+    async function fetchAdsbDbRoute(callsign) {
+      return cachedFetch(`adsbdb-route:${callsign}`, ADSBDB_CALLSIGN_URL + encodeURIComponent(callsign), (data) => {
+        const route = data?.response?.flightroute;
+        if (!route) return {};
+
+        return {
+          origin: cleanAirportCode(route.origin?.icao_code || route.origin?.iata_code),
+          destination: cleanAirportCode(route.destination?.icao_code || route.destination?.iata_code),
+          airline: route.airline?.name || ""
         };
       });
     }

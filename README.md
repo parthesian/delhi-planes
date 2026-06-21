@@ -17,6 +17,7 @@ Open `index.html` in a browser to see current aircraft inside the local IGI / Dw
 - Backup aircraft feed: `https://api.adsb.lol/v2/point/28.5796008/77.0702411/35`
 - HexDB aircraft lookup: `https://hexdb.io/api/v1/aircraft/{icao24}`
 - HexDB route lookup: `https://hexdb.io/api/v1/route/icao/{callsign}`
+- ADSBDB route lookup fallback: `https://api.adsbdb.com/v0/callsign/{callsign}`
 
 These free sources can be incomplete or rate-limited. Missing details are shown as `Unknown`.
 
