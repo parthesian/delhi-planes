@@ -4,18 +4,19 @@ A single-page, dependency-free flight dashboard for spotting aircraft near Dwark
 
 Open `index.html` in a browser to see current aircraft inside the local IGI / Dwarka bounding box. The page:
 
-- Refreshes OpenSky data every 15 seconds with a manual refresh button.
-- Uses light `localStorage` caching so quick refreshes do not hammer anonymous OpenSky limits.
+- Refreshes flight data every 5 minutes for one hour, then waits for another manual refresh.
+- Includes a manual refresh button for an immediate new snapshot.
+- Uses light `localStorage` caching so scheduled refreshes stay gentle.
 - Enriches callsigns/ICAO hex IDs with best-effort airline, aircraft, registration, and route data.
 - Shows a mobile-first card layout plus a potential departure queue sorted around low/climbing aircraft.
-- Uses a Cloudflare Pages Function at `/api/flights` so browsers do not have to call OpenSky/HexDB cross-origin directly.
+- Uses a Cloudflare Pages Function at `/api/flights` for the flight feed and enrichment.
 
 ## Data sources
 
 - OpenSky state vectors: `https://opensky-network.org/api/states/all?lamin=28.45&lomin=77.00&lamax=28.70&lomax=77.25`
 - HexDB aircraft lookup: `https://hexdb.io/api/v1/aircraft/{icao24}`
 - HexDB route lookup: `https://hexdb.io/api/v1/route/icao/{callsign}`
-- Backup aircraft feed if OpenSky rejects anonymous requests: `https://api.airplanes.live/v2/point/28.5796008/77.0702411/35`
+- Backup aircraft feed if OpenSky is unavailable: `https://api.airplanes.live/v2/point/28.5796008/77.0702411/35`
 
 These free sources can be incomplete or rate-limited. Missing details are shown as `Unknown`.
 
@@ -45,4 +46,9 @@ For Cloudflare Pages, deploy this repository as a static site with:
 
 Cloudflare will automatically detect the `functions/` directory and expose `/api/flights` on the same Pages domain.
 
-If direct browser API calls ever need to be replaced, keep the UI and swap the fetch URLs in `index.html` for a Cloudflare Worker or Pages Function that proxies OpenSky/HexDB and returns the same JSON shape.
+Set these Cloudflare Pages environment variables for authenticated OpenSky requests:
+
+- `OPENSKY_CLIENT_ID`
+- `OPENSKY_CLIENT_SECRET`
+
+For local Pages Function testing with Wrangler, put the same keys in `.dev.vars` and keep that file out of git.

@@ -1,6 +1,8 @@
 const OPENSKY_URL = "https://opensky-network.org/api/states/all?lamin=28.45&lomin=77.00&lamax=28.70&lomax=77.25";
+const OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
 const AIRPLANES_LIVE_URL = "https://api.airplanes.live/v2/point/28.5796008/77.0702411/35";
 const MAX_ENRICHED_FLIGHTS = 20;
+const FLIGHT_CACHE_TTL_SECONDS = 5 * 60;
 const BOUNDS = {
   minLat: 28.45,
   maxLat: 28.70,
@@ -10,12 +12,14 @@ const BOUNDS = {
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
-  "cache-control": "public, max-age=15, s-maxage=15"
+  "cache-control": `public, max-age=${FLIGHT_CACHE_TTL_SECONDS}, s-maxage=${FLIGHT_CACHE_TTL_SECONDS}`
 };
 
-export async function onRequestGet() {
+let openSkyTokenCache = null;
+
+export async function onRequestGet({ env } = {}) {
   try {
-    const openSky = await fetchOpenSky();
+    const openSky = await fetchOpenSky(env);
     const states = Array.isArray(openSky.states) ? openSky.states : [];
     const enrichment = await enrichStates(states.slice(0, MAX_ENRICHED_FLIGHTS));
 
@@ -46,18 +50,39 @@ export async function onRequestGet() {
   }
 }
 
-async function fetchOpenSky() {
-  const openSkyResponse = await fetch(OPENSKY_URL, {
+async function fetchOpenSky(env) {
+  const token = await getOpenSkyToken(env);
+  const openSkyResponse = await requestOpenSky(token);
+
+  if (openSkyResponse.status === 401 && token) {
+    const refreshedToken = await getOpenSkyToken(env, { forceRefresh: true });
+    const retriedResponse = await requestOpenSky(refreshedToken);
+    return parseOpenSkyResponse(retriedResponse);
+  }
+
+  return parseOpenSkyResponse(openSkyResponse);
+}
+
+async function requestOpenSky(token) {
+  const headers = {
+    "accept": "application/json",
+    "user-agent": "plane-spotter-dashboard/1.0"
+  };
+
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+  }
+
+  return fetch(OPENSKY_URL, {
     cf: {
       cacheEverything: true,
-      cacheTtl: 15
+      cacheTtl: FLIGHT_CACHE_TTL_SECONDS
     },
-    headers: {
-      "accept": "application/json",
-      "user-agent": "plane-spotter-dashboard/1.0"
-    }
+    headers
   });
+}
 
+async function parseOpenSkyResponse(openSkyResponse) {
   if (!openSkyResponse.ok) {
     throw new Error(`OpenSky returned ${openSkyResponse.status}`);
   }
@@ -65,11 +90,54 @@ async function fetchOpenSky() {
   return openSkyResponse.json();
 }
 
+async function getOpenSkyToken(env, { forceRefresh = false } = {}) {
+  const clientId = env?.OPENSKY_CLIENT_ID;
+  const clientSecret = env?.OPENSKY_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) return "";
+
+  const now = Date.now();
+  if (!forceRefresh && openSkyTokenCache && openSkyTokenCache.expiresAt > now + 30_000) {
+    return openSkyTokenCache.accessToken;
+  }
+
+  const body = new URLSearchParams();
+  body.set("grant_type", "client_credentials");
+  body.set("client_id", clientId);
+  body.set("client_secret", clientSecret);
+
+  const openSkyResponse = await fetch(OPENSKY_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "accept": "application/json"
+    },
+    body
+  });
+
+  if (!openSkyResponse.ok) {
+    throw new Error(`OpenSky token request returned ${openSkyResponse.status}`);
+  }
+
+  const payload = await openSkyResponse.json();
+  if (!payload.access_token) {
+    throw new Error("OpenSky token response did not include an access token");
+  }
+
+  const expiresInMs = Number(payload.expires_in || 1800) * 1000;
+  openSkyTokenCache = {
+    accessToken: payload.access_token,
+    expiresAt: now + expiresInMs
+  };
+
+  return openSkyTokenCache.accessToken;
+}
+
 async function fetchFallbackStates() {
   const response = await fetch(AIRPLANES_LIVE_URL, {
       cf: {
         cacheEverything: true,
-        cacheTtl: 15
+        cacheTtl: FLIGHT_CACHE_TTL_SECONDS
       },
       headers: {
         "accept": "application/json",

@@ -175,6 +175,16 @@
       font-weight: 800;
       cursor: pointer;
       box-shadow: 0 12px 28px rgba(56, 189, 248, 0.22);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+    }
+
+    .refresh-button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 16px 34px rgba(56, 189, 248, 0.28);
+    }
+
+    .refresh-button:active:not(:disabled) {
+      transform: translateY(0);
     }
 
     .refresh-button:disabled {
@@ -194,6 +204,12 @@
       color: var(--muted);
       background: rgba(15, 23, 42, 0.5);
       font-size: 0.9rem;
+      transition: opacity 0.25s ease, border-color 0.25s ease;
+    }
+
+    .countdown.is-paused {
+      border-color: rgba(251, 191, 36, 0.26);
+      color: #fde68a;
     }
 
     .spinner {
@@ -267,6 +283,12 @@
       padding: 18px;
       background: var(--panel);
       box-shadow: 0 14px 44px rgba(0, 0, 0, 0.22);
+      transition:
+        opacity 0.35s ease,
+        transform 0.35s ease,
+        border-color 0.35s ease,
+        box-shadow 0.35s ease;
+      will-change: transform, opacity;
     }
 
     .flight-card::before {
@@ -425,6 +447,32 @@
       border-radius: 22px;
       padding: 14px;
       background: var(--panel-soft);
+      transition:
+        opacity 0.35s ease,
+        transform 0.35s ease,
+        border-color 0.35s ease,
+        box-shadow 0.35s ease;
+      will-change: transform, opacity;
+    }
+
+    .flight-card.is-entering,
+    .queue-item.is-entering {
+      opacity: 0;
+      transform: translateY(14px) scale(0.98);
+    }
+
+    .flight-card.is-leaving,
+    .queue-item.is-leaving {
+      opacity: 0;
+      transform: translateY(-10px) scale(0.98);
+      pointer-events: none;
+    }
+
+    .flight-card.is-moving,
+    .queue-item.is-moving {
+      z-index: 1;
+      border-color: rgba(56, 189, 248, 0.38);
+      box-shadow: 0 18px 52px rgba(56, 189, 248, 0.12);
     }
 
     .queue-number {
@@ -566,6 +614,22 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+      }
+
+      .flight-card,
+      .queue-item {
+        will-change: auto;
+      }
+    }
   </style>
 </head>
 <body>
@@ -594,9 +658,9 @@
           <div class="controls">
             <button class="refresh-button" id="refreshButton" type="button">
               <span class="spinner" aria-hidden="true"></span>
-              <span id="refreshLabel">Refresh radar</span>
+              <span id="refreshLabel">Refresh</span>
             </button>
-            <div class="countdown" id="countdown">Auto refresh in 15s</div>
+            <div class="countdown" id="countdown">Updates quietly</div>
           </div>
         </div>
       </div>
@@ -606,12 +670,12 @@
     <section class="section">
       <div class="section-heading">
         <h2>Nearest aircraft</h2>
-        <p>Sorted by altitude · refreshed through Cloudflare</p>
+        <p>Closest low-altitude flights first</p>
       </div>
       <div class="empty" id="emptyState">
         <div class="empty-icon">✈</div>
         <h2>Skies are quiet — check back in a bit</h2>
-        <p>No aircraft are currently reporting inside the local Dwarka / IGI bounding box.</p>
+        <p>No nearby aircraft are visible right now.</p>
       </div>
       <div class="flight-grid" id="flightGrid"></div>
     </section>
@@ -624,18 +688,13 @@
       <div class="queue" id="queue"></div>
     </section>
 
-    <p class="footer-note">
-      Data is refreshed no faster than every 15 seconds to respect anonymous OpenSky limits.
-      Route and aircraft details are community-sourced and may be incomplete.
-    </p>
   </main>
 
   <script>
-    // The page calls a same-origin Cloudflare Pages Function first. That avoids
-    // mobile/browser CORS failures from OpenSky/HexDB while keeping this UI static.
     const OBSERVER = { lat: 28.5796008, lon: 77.0702411 };
-    const AUTO_REFRESH_SECONDS = 15;
-    const OPENSKY_CACHE_MS = 15 * 1000;
+    const AUTO_REFRESH_MS = 5 * 60 * 1000;
+    const AUTO_REFRESH_WINDOW_MS = 60 * 60 * 1000;
+    const OPENSKY_CACHE_MS = 5 * 60 * 1000;
     const ENRICHMENT_CACHE_MS = 12 * 60 * 60 * 1000;
     const FLIGHTS_API_URL = "/api/flights";
     const DIRECT_OPENSKY_URL = "https://opensky-network.org/api/states/all?lamin=28.45&lomin=77.00&lamax=28.70&lomax=77.25";
@@ -731,7 +790,9 @@
       flights: [],
       isLoading: false,
       lastUpdatedAt: null,
-      nextRefreshAt: Date.now() + AUTO_REFRESH_SECONDS * 1000,
+      nextRefreshAt: null,
+      autoRefreshStartedAt: null,
+      autoRefreshExpired: false,
       countdownTimer: null,
       autoRefreshTimer: null
     };
@@ -749,29 +810,29 @@
       queue: document.getElementById("queue")
     };
 
-    elements.refreshButton.addEventListener("click", () => refreshFlights());
+    elements.refreshButton.addEventListener("click", () => {
+      refreshFlights({ restartAutoRefresh: true, forceNetwork: true });
+    });
     startCountdown();
-    refreshFlights();
+    refreshFlights({ restartAutoRefresh: true });
 
-    async function refreshFlights() {
+    async function refreshFlights({ restartAutoRefresh = false, forceNetwork = false } = {}) {
       if (state.isLoading) return;
+      if (restartAutoRefresh) startAutoRefreshSession();
       setLoading(true);
       hideNotice();
 
       try {
-        const snapshot = await getFlightSnapshot();
+        const snapshot = await getFlightSnapshot({ forceNetwork });
         const flights = normalizeStates(snapshot.states || []);
         const enrichedFlights = await enrichFlights(flights, snapshot.enrichment || {});
 
         state.flights = enrichedFlights.sort((a, b) => a.sortAltitude - b.sortAltitude);
         state.lastUpdatedAt = snapshot.receivedAt ? new Date(snapshot.receivedAt) : new Date();
-        state.nextRefreshAt = Date.now() + AUTO_REFRESH_SECONDS * 1000;
         render();
 
-        if (snapshot.fromCache) {
-          showNotice("Showing cached radar data to avoid hitting OpenSky too quickly. It will refresh automatically in a few seconds.");
-        } else if (snapshot.warning) {
-          showNotice(snapshot.warning);
+        if (snapshot.warning) {
+          showNotice("Using the latest available flight feed.");
         }
       } catch (error) {
         const cached = readJson(CACHE_KEY);
@@ -780,11 +841,11 @@
           state.flights = flights.sort((a, b) => a.sortAltitude - b.sortAltitude);
           state.lastUpdatedAt = new Date(cached.receivedAt);
           render();
-          showNotice(`Live radar failed, showing cached data. ${error.message}`);
+          showNotice("Could not refresh flights. Showing the last update.");
         } else {
           state.flights = [];
           render();
-          showNotice(`Could not load flights right now. ${error.message}`);
+          showNotice("Could not load flights right now.");
         }
       } finally {
         setLoading(false);
@@ -792,10 +853,10 @@
       }
     }
 
-    async function getFlightSnapshot() {
+    async function getFlightSnapshot({ forceNetwork = false } = {}) {
       const cached = readJson(CACHE_KEY);
       const cacheAge = cached ? Date.now() - cached.receivedAt : Infinity;
-      if (cached && cacheAge < OPENSKY_CACHE_MS) {
+      if (!forceNetwork && cached && cacheAge < OPENSKY_CACHE_MS) {
         return { ...cached.payload, receivedAt: cached.receivedAt, fromCache: true };
       }
 
@@ -815,7 +876,7 @@
       const response = await fetch(FLIGHTS_API_URL, { cache: "no-store" });
       const payload = await parseJsonResponse(response);
       if (!response.ok) {
-        throw new Error(payload.error || `Radar proxy returned ${response.status}.`);
+        throw new Error(payload.error || `Flight feed returned ${response.status}.`);
       }
       return payload;
     }
@@ -824,7 +885,7 @@
       const response = await fetch(DIRECT_OPENSKY_URL, { cache: "no-store" });
       const payload = await parseJsonResponse(response);
       if (!response.ok) {
-        throw new Error(payload.error || `OpenSky returned ${response.status}.`);
+        throw new Error(payload.error || `Flight feed returned ${response.status}.`);
       }
       return payload;
     }
@@ -952,8 +1013,14 @@
       elements.lastUpdated.textContent = state.lastUpdatedAt ? formatTime(state.lastUpdatedAt) : "Never";
       elements.aircraftCount.textContent = String(state.flights.length);
       elements.emptyState.classList.toggle("show", state.flights.length === 0);
-      elements.flightGrid.innerHTML = state.flights.map(renderFlightCard).join("");
-      elements.queue.innerHTML = renderQueue(state.flights);
+      updateKeyedList(
+        elements.flightGrid,
+        state.flights.map((flight) => ({
+          key: flight.icao24,
+          html: renderFlightCard(flight)
+        }))
+      );
+      updateKeyedList(elements.queue, renderQueueItems(state.flights));
     }
 
     function renderFlightCard(flight) {
@@ -962,7 +1029,7 @@
       const isHot = flight.status.toLowerCase().includes("over you");
 
       return `
-        <article class="flight-card">
+        <article class="flight-card" data-flight-key="${escapeHtml(flight.icao24)}">
           <div class="flight-top">
             <div class="logo" aria-hidden="true">✈</div>
             <div class="identity">
@@ -1014,7 +1081,7 @@
       `;
     }
 
-    function renderQueue(flights) {
+    function renderQueueItems(flights) {
       const queueFlights = [...flights].sort((a, b) => {
         const aClimb = a.trend.label === "Climbing" ? -2000 : 0;
         const bClimb = b.trend.label === "Climbing" ? -2000 : 0;
@@ -1022,13 +1089,18 @@
       }).slice(0, 8);
 
       if (!queueFlights.length) {
-        return `<div class="queue-item"><div class="queue-number">--</div><div class="queue-main"><strong>No queue yet</strong><span>Flights will appear here when OpenSky sees them.</span></div><div class="queue-side">Idle</div></div>`;
+        return [{
+          key: "empty",
+          html: `<div class="queue-item" data-flight-key="empty"><div class="queue-number">--</div><div class="queue-main"><strong>No queue yet</strong><span>Nearby flights will appear here.</span></div><div class="queue-side">Idle</div></div>`
+        }];
       }
 
       return queueFlights.map((flight, index) => {
         const destination = airportDisplay(flight.enrichment.destination);
-        return `
-          <div class="queue-item">
+        return {
+          key: flight.icao24,
+          html: `
+          <div class="queue-item" data-flight-key="${escapeHtml(flight.icao24)}">
             <div class="queue-number">${index + 1}</div>
             <div class="queue-main">
               <strong>${escapeHtml(flight.callsign || flight.icao24.toUpperCase())} · ${escapeHtml(destination.code)}</strong>
@@ -1036,8 +1108,79 @@
             </div>
             <div class="queue-side">${escapeHtml(flight.status)}<br>${escapeHtml(flight.trend.label)}</div>
           </div>
-        `;
-      }).join("");
+        `
+        };
+      });
+    }
+
+    function updateKeyedList(container, items) {
+      const previousRects = new Map();
+      [...container.children].forEach((child) => {
+        if (!child.classList.contains("is-leaving")) {
+          previousRects.set(child.dataset.flightKey, child.getBoundingClientRect());
+        }
+      });
+
+      const existing = new Map(
+        [...container.children]
+          .filter((child) => !child.classList.contains("is-leaving"))
+          .map((child) => [child.dataset.flightKey, child])
+      );
+      const nextKeys = new Set(items.map((item) => item.key));
+
+      existing.forEach((node, key) => {
+        if (!nextKeys.has(key)) {
+          node.classList.add("is-leaving");
+          node.addEventListener("transitionend", () => node.remove(), { once: true });
+          setTimeout(() => node.remove(), 450);
+        }
+      });
+
+      items.forEach((item, index) => {
+        const current = existing.get(item.key);
+        const nextNode = createElementFromHtml(item.html);
+        const anchor = container.children[index] || null;
+
+        if (current) {
+          current.className = nextNode.className;
+          current.dataset.flightKey = item.key;
+          current.innerHTML = nextNode.innerHTML;
+          container.insertBefore(current, anchor);
+          return;
+        }
+
+        nextNode.classList.add("is-entering");
+        container.insertBefore(nextNode, anchor);
+        requestAnimationFrame(() => nextNode.classList.remove("is-entering"));
+      });
+
+      requestAnimationFrame(() => {
+        [...container.children].forEach((child) => {
+          if (child.classList.contains("is-leaving")) return;
+          const previousRect = previousRects.get(child.dataset.flightKey);
+          if (!previousRect) return;
+
+          const nextRect = child.getBoundingClientRect();
+          const deltaX = previousRect.left - nextRect.left;
+          const deltaY = previousRect.top - nextRect.top;
+
+          if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+
+          child.style.transition = "none";
+          child.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+          child.offsetHeight;
+          child.style.transition = "";
+          child.classList.add("is-moving");
+          child.style.transform = "";
+          setTimeout(() => child.classList.remove("is-moving"), 400);
+        });
+      });
+    }
+
+    function createElementFromHtml(html) {
+      const template = document.createElement("template");
+      template.innerHTML = html.trim();
+      return template.content.firstElementChild;
     }
 
     function flightStatus({ altitudeFeet, verticalRate, distanceKm, onGround }) {
@@ -1140,7 +1283,8 @@
       state.isLoading = isLoading;
       elements.toolbar.classList.toggle("is-loading", isLoading);
       elements.refreshButton.disabled = isLoading;
-      elements.refreshLabel.textContent = isLoading ? "Scanning..." : "Refresh radar";
+      elements.refreshLabel.textContent = isLoading ? "Refreshing..." : "Refresh";
+      updateCountdown();
     }
 
     function showNotice(message) {
@@ -1155,16 +1299,55 @@
 
     function startCountdown() {
       clearInterval(state.countdownTimer);
-      state.countdownTimer = setInterval(() => {
-        const seconds = Math.max(0, Math.ceil((state.nextRefreshAt - Date.now()) / 1000));
-        elements.countdown.textContent = state.isLoading ? "Refreshing now" : `Auto refresh in ${seconds}s`;
-      }, 250);
+      updateCountdown();
+      state.countdownTimer = setInterval(updateCountdown, 1000);
     }
 
     function scheduleAutoRefresh() {
       clearTimeout(state.autoRefreshTimer);
-      state.nextRefreshAt = Date.now() + AUTO_REFRESH_SECONDS * 1000;
-      state.autoRefreshTimer = setTimeout(() => refreshFlights(), AUTO_REFRESH_SECONDS * 1000);
+      if (!hasActiveAutoRefreshSession()) {
+        state.nextRefreshAt = null;
+        state.autoRefreshExpired = Boolean(state.autoRefreshStartedAt);
+        updateCountdown();
+        return;
+      }
+
+      const expiresAt = state.autoRefreshStartedAt + AUTO_REFRESH_WINDOW_MS;
+      const delay = Math.min(AUTO_REFRESH_MS, Math.max(0, expiresAt - Date.now()));
+
+      state.nextRefreshAt = Date.now() + delay;
+      updateCountdown();
+
+      state.autoRefreshTimer = setTimeout(() => {
+        if (!hasActiveAutoRefreshSession()) {
+          scheduleAutoRefresh();
+          return;
+        }
+        refreshFlights();
+      }, delay);
+    }
+
+    function startAutoRefreshSession() {
+      state.autoRefreshStartedAt = Date.now();
+      state.autoRefreshExpired = false;
+    }
+
+    function hasActiveAutoRefreshSession() {
+      return Boolean(
+        state.autoRefreshStartedAt &&
+        Date.now() - state.autoRefreshStartedAt < AUTO_REFRESH_WINDOW_MS
+      );
+    }
+
+    function updateCountdown() {
+      elements.countdown.classList.toggle("is-paused", state.autoRefreshExpired);
+      if (state.isLoading) {
+        elements.countdown.textContent = "Refreshing";
+      } else if (state.autoRefreshExpired) {
+        elements.countdown.textContent = "Paused";
+      } else {
+        elements.countdown.textContent = "Updates quietly";
+      }
     }
 
     function readJson(key) {
